@@ -9,28 +9,27 @@ function App() {
   const { data: tasks, isLoading: tasksLoading } = useTasks();
   const { data: projects } = useProjects();
   const { data: people } = usePeople();
-  const { sidebarOpen, visibleProjectIds, visiblePersonIds, hideDoneTasks, darkMode } = useUIStore();
+  const { sidebarOpen, visibleProjectIds, visiblePersonIds, darkMode } = useUIStore();
 
   // Apply dark mode class on mount
   useEffect(() => {
     document.documentElement.classList.toggle('dark', darkMode);
   }, [darkMode]);
 
-  // Filter tasks by visible projects, people, and done status
+  // Filter tasks by visible projects and people.
+  // Done tasks are never filtered out — they stay on the timeline with muted styling.
   const filteredTasks = useMemo(() => {
     if (!tasks) return [];
     return tasks.filter((t) => {
-      if (hideDoneTasks && t.status === 'done') return false;
       if (visibleProjectIds !== null && t.project_id && !visibleProjectIds.has(t.project_id)) {
         return false;
       }
       if (visiblePersonIds !== null) {
-        // Show task if assignee is visible, or if unassigned (always show)
         if (t.assignee_id && !visiblePersonIds.has(t.assignee_id)) return false;
       }
       return true;
     });
-  }, [tasks, visibleProjectIds, visiblePersonIds, hideDoneTasks]);
+  }, [tasks, visibleProjectIds, visiblePersonIds]);
 
   if (tasksLoading) {
     return (

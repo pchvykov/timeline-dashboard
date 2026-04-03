@@ -11,7 +11,6 @@ export function Sidebar() {
     visiblePersonIds, togglePersonVisibility, showAllPeople,
     personOrder, setPersonOrder,
     projectOrder, setProjectOrder,
-    hideDoneTasks, toggleHideDoneTasks,
   } = useUIStore();
 
   // ── Project drag-to-reorder ────────────────────────────────────────────────
@@ -210,18 +209,6 @@ export function Sidebar() {
         })}
       </ul>
 
-      {/* ── Filters ── */}
-      <h2 className="text-sm font-semibold uppercase tracking-wider mb-2" style={{ color: 'var(--text-muted)' }}>
-        Filters
-      </h2>
-      <label className="flex items-center gap-2 text-sm cursor-pointer">
-        <input
-          type="checkbox"
-          checked={hideDoneTasks}
-          onChange={toggleHideDoneTasks}
-        />
-        <span style={{ color: 'var(--text-primary)' }}>Hide completed</span>
-      </label>
     </aside>
   );
 }
