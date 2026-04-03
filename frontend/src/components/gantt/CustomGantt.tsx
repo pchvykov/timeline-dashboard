@@ -239,6 +239,17 @@ export function CustomGantt({ tasks, projects, people }: Props) {
   const pxPerDayRef = useRef(pxPerDay);
   useEffect(() => { pxPerDayRef.current = pxPerDay; }, [pxPerDay]);
 
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const labelsRef = useRef<HTMLDivElement>(null);
+  const dragState = useRef<DragState | null>(null);
+  const resizeLane = useRef<{ laneId: string; startY: number; startHeight: number } | null>(null);
+  const autoPlacedRef = useRef<Set<number>>(new Set());
+  const undoStack = useRef<Array<{ undo: () => void; redo: () => void }>>([]);
+  const redoStack = useRef<Array<{ undo: () => void; redo: () => void }>>([]);
+  const pendingScrollLeft = useRef<number | null>(null);
+  // Tracks whether the initial "scroll to today" has already run
+  const didScrollToToday = useRef(false);
+
   // After a zoom re-render, restore the focal-point scroll position
   useEffect(() => {
     if (pendingScrollLeft.current !== null && scrollRef.current) {
@@ -247,22 +258,12 @@ export function CustomGantt({ tasks, projects, people }: Props) {
     }
   }, [pxPerDay]);
 
-  // Zoom around a specific content-X pixel (e.g. cursor or viewport center)
+  // Zoom around a specific content-X pixel (cursor or viewport center)
   const zoomToFactor = useCallback((factor: number, focalContentX: number, focalScreenX: number) => {
     const newPx = Math.max(1, Math.min(80, pxPerDayRef.current * factor));
     pendingScrollLeft.current = Math.max(0, focalContentX * (newPx / pxPerDayRef.current) - focalScreenX);
     setPxPerDay(newPx);
   }, [setPxPerDay]);
-
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const labelsRef = useRef<HTMLDivElement>(null);
-  const dragState = useRef<DragState | null>(null);
-  const resizeLane = useRef<{ laneId: string; startY: number; startHeight: number } | null>(null);
-  const autoPlacedRef = useRef<Set<number>>(new Set());
-  const undoStack = useRef<Array<{ undo: () => void; redo: () => void }>>([]);
-  const redoStack = useRef<Array<{ undo: () => void; redo: () => void }>>([]);
-  // Scroll position to restore after a zoom re-render
-  const pendingScrollLeft = useRef<number | null>(null);
 
   // ── Drag overlay state (minimal re-renders) ──────────────────────────────
   const [dragOverlay, setDragOverlay] = useState<{
@@ -471,11 +472,11 @@ export function CustomGantt({ tasks, projects, people }: Props) {
     labelsRef.current.scrollTop = scrollRef.current.scrollTop;
   }, []);
 
-  // ── Scroll to today on mount ─────────────────────────────────────────────
+  // ── Scroll to today — only on initial mount, not on every zoom ──────────
   useEffect(() => {
-    if (scrollRef.current) {
-      const offset = todayX - 200;
-      scrollRef.current.scrollLeft = Math.max(0, offset);
+    if (!didScrollToToday.current && scrollRef.current) {
+      scrollRef.current.scrollLeft = Math.max(0, todayX - 200);
+      didScrollToToday.current = true;
     }
   }, [todayX]);
 
@@ -1179,7 +1180,6 @@ export function CustomGantt({ tasks, projects, people }: Props) {
                           boxShadow: isDone ? 'none' : '0 1px 3px rgba(0,0,0,0.2)',
                           overflow: 'hidden',
                           boxSizing: 'border-box',
-                          pointerEvents: isDone ? 'none' : 'auto',
                         }}
                         onMouseDown={isDone ? undefined : (e) => handleTaskMouseDown(e, task, 'move', lane.id)}
                       >
