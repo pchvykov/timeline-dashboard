@@ -239,6 +239,21 @@ export function CustomGantt({ tasks, projects, people }: Props) {
   const pxPerDayRef = useRef(pxPerDay);
   useEffect(() => { pxPerDayRef.current = pxPerDay; }, [pxPerDay]);
 
+  // After a zoom re-render, restore the focal-point scroll position
+  useEffect(() => {
+    if (pendingScrollLeft.current !== null && scrollRef.current) {
+      scrollRef.current.scrollLeft = pendingScrollLeft.current;
+      pendingScrollLeft.current = null;
+    }
+  }, [pxPerDay]);
+
+  // Zoom around a specific content-X pixel (e.g. cursor or viewport center)
+  const zoomToFactor = useCallback((factor: number, focalContentX: number, focalScreenX: number) => {
+    const newPx = Math.max(1, Math.min(80, pxPerDayRef.current * factor));
+    pendingScrollLeft.current = Math.max(0, focalContentX * (newPx / pxPerDayRef.current) - focalScreenX);
+    setPxPerDay(newPx);
+  }, [setPxPerDay]);
+
   const scrollRef = useRef<HTMLDivElement>(null);
   const labelsRef = useRef<HTMLDivElement>(null);
   const dragState = useRef<DragState | null>(null);
@@ -246,6 +261,8 @@ export function CustomGantt({ tasks, projects, people }: Props) {
   const autoPlacedRef = useRef<Set<number>>(new Set());
   const undoStack = useRef<Array<{ undo: () => void; redo: () => void }>>([]);
   const redoStack = useRef<Array<{ undo: () => void; redo: () => void }>>([]);
+  // Scroll position to restore after a zoom re-render
+  const pendingScrollLeft = useRef<number | null>(null);
 
   // ── Drag overlay state (minimal re-renders) ──────────────────────────────
   const [dragOverlay, setDragOverlay] = useState<{
@@ -809,20 +826,22 @@ export function CustomGantt({ tasks, projects, people }: Props) {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
-  // Wheel / pinch zoom (Ctrl+wheel = pinch on trackpad) — continuous
+  // Wheel / pinch zoom (Ctrl+wheel = pinch on trackpad) — continuous, anchored to cursor
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
       if (!e.ctrlKey) return;
       e.preventDefault();
-      // 3× sensitivity vs original: ~10% per ~17px of scroll
       const factor = Math.pow(0.9, e.deltaY / 17);
-      setPxPerDay(Math.max(1, Math.min(80, pxPerDayRef.current * factor)));
+      const rect = el.getBoundingClientRect();
+      const focalScreenX = e.clientX - rect.left;
+      const focalContentX = focalScreenX + el.scrollLeft;
+      zoomToFactor(factor, focalContentX, focalScreenX);
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
-  }, [setPxPerDay]);
+  }, [zoomToFactor]);
 
   // ── Date header ticks ────────────────────────────────────────────────────
   const monthTicks = useMemo(
@@ -878,7 +897,11 @@ export function CustomGantt({ tasks, projects, people }: Props) {
       >
         <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Zoom:</span>
         <button
-          onClick={() => setPxPerDay(pxPerDay / 1.5)}
+          onClick={() => {
+            if (!scrollRef.current) return;
+            const half = scrollRef.current.clientWidth / 2;
+            zoomToFactor(1 / 1.5, scrollRef.current.scrollLeft + half, half);
+          }}
           className="w-6 h-6 rounded flex items-center justify-center text-sm font-bold"
           style={{ border: '1px solid var(--border)', color: 'var(--text-muted)' }}
           title="Zoom out"
@@ -892,7 +915,11 @@ export function CustomGantt({ tasks, projects, people }: Props) {
           {zoomLabel(pxPerDay)}
         </span>
         <button
-          onClick={() => setPxPerDay(pxPerDay * 1.5)}
+          onClick={() => {
+            if (!scrollRef.current) return;
+            const half = scrollRef.current.clientWidth / 2;
+            zoomToFactor(1.5, scrollRef.current.scrollLeft + half, half);
+          }}
           className="w-6 h-6 rounded flex items-center justify-center text-sm font-bold"
           style={{ border: '1px solid var(--border)', color: 'var(--text-muted)' }}
           title="Zoom in"
@@ -1122,8 +1149,9 @@ export function CustomGantt({ tasks, projects, people }: Props) {
                     const statusBorderColor = STATUS_BORDER[task.status] ?? '#9ca3af';
 
                     const isDragging = dragState.current?.taskId === task.id;
-                    // density 1–100 → opacity 0.35–1.0
-                    const densityOpacity = 0.35 + (task.density / 100) * 0.65;
+                    const isDone = task.status === 'done';
+                    // density 1–100 → opacity 0.35–1.0; done tasks always muted
+                    const densityOpacity = isDone ? 0.28 : 0.35 + (task.density / 100) * 0.65;
 
                     return (
                       <div
@@ -1137,21 +1165,23 @@ export function CustomGantt({ tasks, projects, people }: Props) {
                           top: barTop,
                           width: w,
                           height: TASK_HEIGHT,
-                          backgroundColor: color + 'cc',
-                          borderLeft: `3px solid ${statusBorderColor}`,
+                          backgroundColor: isDone ? color + '33' : color + 'cc',
+                          border: isDone ? `1.5px dashed ${color}88` : `none`,
+                          borderLeft: isDone ? `1.5px dashed ${color}88` : `3px solid ${statusBorderColor}`,
                           borderRadius: task.type === 'milestone' ? '3px' : '4px',
                           display: 'flex',
                           alignItems: 'center',
                           paddingLeft: 5,
-                          cursor: 'grab',
+                          cursor: isDone ? 'default' : 'grab',
                           userSelect: 'none',
                           zIndex: isDragging ? 15 : 6,
                           opacity: isDragging ? 0.4 : densityOpacity,
-                          boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
+                          boxShadow: isDone ? 'none' : '0 1px 3px rgba(0,0,0,0.2)',
                           overflow: 'hidden',
                           boxSizing: 'border-box',
+                          pointerEvents: isDone ? 'none' : 'auto',
                         }}
-                        onMouseDown={(e) => handleTaskMouseDown(e, task, 'move', lane.id)}
+                        onMouseDown={isDone ? undefined : (e) => handleTaskMouseDown(e, task, 'move', lane.id)}
                       >
                         {/* Task title */}
                         <span
@@ -1185,46 +1215,18 @@ export function CustomGantt({ tasks, projects, people }: Props) {
                           />
                         )}
 
-                        {/* Resize left handle */}
-                        <div
-                          style={{
-                            position: 'absolute',
-                            left: 0,
-                            top: 0,
-                            bottom: 0,
-                            width: 6,
-                            cursor: 'ew-resize',
-                            zIndex: 2,
-                          }}
-                          onMouseDown={(e) => {
-                            e.stopPropagation();
-                            handleTaskMouseDown(e, task, 'resize-left', lane.id);
-                          }}
-                        />
-
-                        {/* Resize right handle */}
-                        <div
-                          style={{
-                            position: 'absolute',
-                            right: 0,
-                            top: 0,
-                            bottom: 0,
-                            width: 6,
-                            cursor: 'ew-resize',
-                            zIndex: 2,
-                          }}
-                          onMouseDown={(e) => {
-                            e.stopPropagation();
-                            handleTaskMouseDown(e, task, 'resize-right', lane.id);
-                          }}
-                        />
-
-                        {/* Connect dep dot (right edge, shown on hover via CSS) */}
-                        <ConnectDot
-                          task={task}
-                          lane={lane}
-                          onMouseDown={handleTaskMouseDown}
-                        />
+                        {/* Resize / connect handles — not shown for done tasks */}
+                        {!isDone && (<>
+                          <div
+                            style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 6, cursor: 'ew-resize', zIndex: 2 }}
+                            onMouseDown={(e) => { e.stopPropagation(); handleTaskMouseDown(e, task, 'resize-left', lane.id); }}
+                          />
+                          <div
+                            style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 6, cursor: 'ew-resize', zIndex: 2 }}
+                            onMouseDown={(e) => { e.stopPropagation(); handleTaskMouseDown(e, task, 'resize-right', lane.id); }}
+                          />
+                          <ConnectDot task={task} lane={lane} onMouseDown={handleTaskMouseDown} />
+                        </>)}
                       </div>
                     );
                   })}
