@@ -101,6 +101,7 @@ export function TaskDetailPanel({ task, projects, people }: Props) {
     [task.notes]
   );
 
+  const [title, setTitle] = useState(task.title);
   const [description, setDescription] = useState(task.description ?? '');
   const [freeform, setFreeform] = useState(initFree);
   const [checklist, setChecklist] = useState<ChecklistItem[]>(initList);
@@ -109,6 +110,7 @@ export function TaskDetailPanel({ task, projects, people }: Props) {
 
   // Sync if task changes
   useEffect(() => {
+    setTitle(task.title);
     setDescription(task.description ?? '');
     const { freeform: f, checklist: c } = parseNotes(task.notes);
     setFreeform(f);
@@ -165,13 +167,18 @@ export function TaskDetailPanel({ task, projects, people }: Props) {
       style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-elevated)' }}
     >
       {/* Header */}
-      <div className="flex items-start justify-between">
-        <h2 className="text-lg font-semibold flex-1" style={{ color: 'var(--text-primary)' }}>
-          {task.title}
-        </h2>
+      <div className="flex items-start justify-between gap-2">
+        <input
+          className="text-lg font-semibold flex-1 bg-transparent outline-none border-b border-transparent focus:border-current rounded-none"
+          style={{ color: 'var(--text-primary)' }}
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          onBlur={() => { if (title.trim()) handleUpdate({ title: title.trim() }); else setTitle(task.title); }}
+          onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+        />
         <button
           onClick={() => setSelectedTaskId(null)}
-          className="ml-2 text-xl leading-none"
+          className="mt-1 text-xl leading-none flex-shrink-0"
           style={{ color: 'var(--text-muted)' }}
         >
           &times;
