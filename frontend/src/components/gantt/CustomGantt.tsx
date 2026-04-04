@@ -1178,8 +1178,8 @@ export function CustomGantt({ tasks, projects, people }: Props) {
 
                     const isDragging = dragState.current?.taskId === task.id;
                     const isDone = task.status === 'done';
-                    // density 1–100 → opacity 0.35–1.0; done tasks always muted
-                    const densityOpacity = isDone ? 0.28 : 0.35 + (task.density / 100) * 0.65;
+                    // density 0–100 → opacity 0–1.0 linear; done tasks always muted
+                    const densityOpacity = isDone ? 0.28 : task.density / 100;
 
                     return (
                       <div
