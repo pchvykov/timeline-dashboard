@@ -6,9 +6,10 @@ cd "$(dirname "$0")"
 echo "Starting Timeline Dashboard..."
 
 # Point the backend at the personal_os db (one level up from dashboard/).
+# We resolve to an absolute path using $PWD (which is now the dashboard dir).
 # For standalone / open-source use, remove this line and tasks.db will be
 # created automatically inside the dashboard folder.
-export DASHBOARD_DB_PATH="$(dirname "$0")/../tasks.db"
+export DASHBOARD_DB_PATH="$(cd .. && pwd)/tasks.db"
 
 # Kill any stale processes on the ports first
 echo "Clearing ports..."
