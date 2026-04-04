@@ -103,6 +103,39 @@ Interactive docs at http://localhost:8000/docs once running.
 | POST | `/api/projects` | Create project |
 | GET | `/api/people` | List people |
 
+## Task design principles
+
+When creating or managing tasks (whether via the UI, API, or an AI assistant), these principles produce a timeline that's actually readable and useful:
+
+### Duration
+- **Single day** — tasks you'd finish in one sitting. Set `start_date = end_date`.
+- **Multi-day focused** — tasks requiring several real work sessions. Set a realistic span; don't pad.
+- **Long ongoing** — background work spanning weeks/months (monitoring, recurring sends, check-ins). Cover the full active period; keep density low.
+
+### Density (1–100, where 100 = can't do much else that day)
+Calibrated to a typical ~6h workday:
+
+| Density | Meaning | Example |
+|---|---|---|
+| 100% | Full immersion, all-day | Deep writing session, all-day debugging |
+| 60–70% | Significant focused work | Writing a blog post, building a feature |
+| 40–50% | Several hours, leaves room for other things | Technical setup, campaign prep |
+| 20–30% | A few focused hours | Writing 4 partner emails, 30-min daily check-in |
+| 10–15% | Background / recurring light work | Monitoring metrics, responding to inquiries |
+| 5% | Holding container / reference | Idea backlog, someday/maybe list |
+
+**Quick calibration examples:**
+- Sending 1 email → 10% × 1 day
+- Sending 10 similar emails → 30% × 1 day
+- Sending 50 personalized emails → 30% × 3 days (spread to avoid fatigue)
+- Writing a blog post (3–8h) → 60–70% × 1–2 days
+- Monthly monitoring → 10% across full duration
+
+### Splitting vs. grouping
+- **Split** tasks that require different mental modes or would be done on different days (e.g., "send announcement email to list" vs. "write personalized invitations" — one is a quick send, the other needs individual thought per recipient).
+- **Group** tasks that flow naturally in one session or form a recurring cadence container (e.g., a blog writing queue with multiple post ideas; a monthly email cadence — same motion repeated).
+- **Test:** "Would I sit down and do these at the same time?" → yes: group. No: split.
+
 ## Tech stack
 
 - **Backend:** FastAPI, SQLAlchemy, SQLite (WAL mode)
