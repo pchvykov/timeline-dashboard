@@ -8,7 +8,7 @@ import {
 import { TaskDetailModal } from './TaskDetailModal';
 import { addDays, subDays, differenceInCalendarDays, format } from 'date-fns';
 import type { Task, Project, Person } from '../../lib/api';
-import { useMoveTask, useUpdateTask, useAddDependency, useDeleteDependency } from '../../hooks/useTasks';
+import { useMoveTask, useUpdateTask, useCreateTask, useAddDependency, useDeleteDependency } from '../../hooks/useTasks';
 import { useUIStore } from '../../store/uiStore';
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -224,6 +224,7 @@ function BezierArrow({
 export function CustomGantt({ tasks, projects, people }: Props) {
   const moveTask = useMoveTask();
   const updateTask = useUpdateTask();
+  const createTask = useCreateTask();
   const addDependency = useAddDependency();
   const deleteDependency = useDeleteDependency();
   const setSelectedTaskId = useUIStore((s) => s.setSelectedTaskId);
@@ -513,6 +514,31 @@ export function CustomGantt({ tasks, projects, people }: Props) {
       return best ? { lane: best.lane, row: best.row } : null;
     },
     [lanes, laneTopMap, laneHeightMap]
+  );
+
+  // ── Double-click on blank lane space → create task ───────────────────────
+  const handleLaneDoubleClick = useCallback(
+    (e: React.MouseEvent, lane: Lane) => {
+      if (!scrollRef.current) return;
+      const rect = scrollRef.current.getBoundingClientRect();
+      const clickX = e.clientX - rect.left + scrollRef.current.scrollLeft;
+      const clickDate = xToDate(clickX, viewStart, pxPerDay);
+      const dateStr = format(clickDate, 'yyyy-MM-dd');
+      const endStr = format(addDays(clickDate, 1), 'yyyy-MM-dd');
+      createTask.mutate(
+        {
+          title: 'New task',
+          assignee_id: lane.personId ?? null,
+          start_date: dateStr,
+          end_date: endStr,
+          status: 'todo',
+          priority: 2,
+          density: 100,
+        },
+        { onSuccess: (t) => setSelectedTaskId(t.id) }
+      );
+    },
+    [viewStart, pxPerDay, createTask, setSelectedTaskId]
   );
 
   // ── Mouse event handlers ─────────────────────────────────────────────────
@@ -1111,6 +1137,7 @@ export function CustomGantt({ tasks, projects, people }: Props) {
               return (
                 <div
                   key={lane.id}
+                  onDoubleClick={(e) => handleLaneDoubleClick(e, lane)}
                   style={{
                     position: 'absolute',
                     top: laneTop,

@@ -1,6 +1,6 @@
 import { useMemo, useState, useEffect, useCallback } from 'react';
 import type { Task, Project, Person } from '../../lib/api';
-import { useUpdateTask } from '../../hooks/useTasks';
+import { useUpdateTask, useDeleteTask } from '../../hooks/useTasks';
 import { useUIStore } from '../../store/uiStore';
 
 interface Props {
@@ -85,6 +85,7 @@ function SmoothSlider({
 export function TaskDetailPanel({ task, projects, people }: Props) {
   const setSelectedTaskId = useUIStore((s) => s.setSelectedTaskId);
   const updateTask = useUpdateTask();
+  const deleteTask = useDeleteTask();
 
   const project = useMemo(
     () => projects.find((p) => p.id === task.project_id),
@@ -176,17 +177,23 @@ export function TaskDetailPanel({ task, projects, people }: Props) {
       </div>
 
       {/* Project */}
-      {project && (
-        <div>
-          <label className="text-xs uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
-            Project
-          </label>
-          <div className="flex items-center gap-2 mt-1">
-            <span className="w-3 h-3 rounded-sm" style={{ backgroundColor: project.color }} />
-            <span className="text-sm" style={{ color: 'var(--text-primary)' }}>{project.name}</span>
-          </div>
+      <div>
+        <label className="text-xs uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+          Project
+        </label>
+        <div className="flex items-center gap-2 mt-1">
+          {project && <span className="w-3 h-3 rounded-sm flex-shrink-0" style={{ backgroundColor: project.color }} />}
+          <select
+            className="flex-1 p-1.5 rounded text-sm"
+            style={{ backgroundColor: 'var(--bg-surface)', color: 'var(--text-primary)', border: '1px solid var(--border)' }}
+            value={task.project_id ?? ''}
+            onChange={(e) => handleUpdate({ project_id: e.target.value ? Number(e.target.value) : null })}
+          >
+            <option value="">No project</option>
+            {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
         </div>
-      )}
+      </div>
 
       {/* Assignee */}
       <div>
@@ -398,6 +405,19 @@ export function TaskDetailPanel({ task, projects, people }: Props) {
         <div>Created: {task.created_at}</div>
         <div>Updated: {task.updated_at}</div>
       </div>
+
+      {/* Delete */}
+      <button
+        onClick={() => {
+          if (!confirm(`Delete "${task.title}"?`)) return;
+          deleteTask.mutate(task.id);
+          setSelectedTaskId(null);
+        }}
+        className="w-full mt-2 py-2 rounded text-sm font-medium"
+        style={{ backgroundColor: '#ef444420', color: '#ef4444', border: '1px solid #ef444460' }}
+      >
+        Delete task
+      </button>
     </div>
   );
 }
