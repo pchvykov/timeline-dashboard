@@ -101,6 +101,7 @@ export function TaskDetailPanel({ task, projects, people }: Props) {
     [task.notes]
   );
 
+  const [description, setDescription] = useState(task.description ?? '');
   const [freeform, setFreeform] = useState(initFree);
   const [checklist, setChecklist] = useState<ChecklistItem[]>(initList);
   const [newItemText, setNewItemText] = useState('');
@@ -108,11 +109,12 @@ export function TaskDetailPanel({ task, projects, people }: Props) {
 
   // Sync if task changes
   useEffect(() => {
+    setDescription(task.description ?? '');
     const { freeform: f, checklist: c } = parseNotes(task.notes);
     setFreeform(f);
     setChecklist(c);
     setShowChecklist(c.length > 0);
-  }, [task.id, task.notes]);
+  }, [task.id, task.notes, task.description]);
 
   const handleUpdate = useCallback((data: Partial<Task>) => {
     updateTask.mutate({ id: task.id, data });
@@ -209,6 +211,22 @@ export function TaskDetailPanel({ task, projects, people }: Props) {
           <option value="">Unassigned</option>
           {people.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
+      </div>
+
+      {/* Description */}
+      <div>
+        <label className="text-xs uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+          Description
+        </label>
+        <textarea
+          rows={3}
+          className="block w-full mt-1 rounded text-sm p-2 resize-y"
+          style={{ backgroundColor: 'var(--bg-surface)', color: 'var(--text-primary)', border: '1px solid var(--border)', fontFamily: 'inherit' }}
+          placeholder="Add description…"
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          onBlur={() => handleUpdate({ description: description || null })}
+        />
       </div>
 
       {/* Status */}
