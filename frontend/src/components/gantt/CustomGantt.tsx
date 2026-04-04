@@ -1173,7 +1173,7 @@ export function CustomGantt({ tasks, projects, people }: Props) {
                           display: 'flex',
                           alignItems: 'center',
                           paddingLeft: 5,
-                          cursor: isDone ? 'default' : 'grab',
+                          cursor: 'grab',
                           userSelect: 'none',
                           zIndex: isDragging ? 15 : 6,
                           opacity: isDragging ? 0.4 : densityOpacity,
@@ -1181,7 +1181,7 @@ export function CustomGantt({ tasks, projects, people }: Props) {
                           overflow: 'hidden',
                           boxSizing: 'border-box',
                         }}
-                        onMouseDown={isDone ? undefined : (e) => handleTaskMouseDown(e, task, 'move', lane.id)}
+                        onMouseDown={(e) => handleTaskMouseDown(e, task, 'move', lane.id)}
                       >
                         {/* Task title */}
                         <span
@@ -1215,18 +1215,15 @@ export function CustomGantt({ tasks, projects, people }: Props) {
                           />
                         )}
 
-                        {/* Resize / connect handles — not shown for done tasks */}
-                        {!isDone && (<>
-                          <div
-                            style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 6, cursor: 'ew-resize', zIndex: 2 }}
-                            onMouseDown={(e) => { e.stopPropagation(); handleTaskMouseDown(e, task, 'resize-left', lane.id); }}
-                          />
-                          <div
-                            style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 6, cursor: 'ew-resize', zIndex: 2 }}
-                            onMouseDown={(e) => { e.stopPropagation(); handleTaskMouseDown(e, task, 'resize-right', lane.id); }}
-                          />
-                          <ConnectDot task={task} lane={lane} onMouseDown={handleTaskMouseDown} />
-                        </>)}
+                        <div
+                          style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 6, cursor: 'ew-resize', zIndex: 2 }}
+                          onMouseDown={(e) => { e.stopPropagation(); handleTaskMouseDown(e, task, 'resize-left', lane.id); }}
+                        />
+                        <div
+                          style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 6, cursor: 'ew-resize', zIndex: 2 }}
+                          onMouseDown={(e) => { e.stopPropagation(); handleTaskMouseDown(e, task, 'resize-right', lane.id); }}
+                        />
+                        <ConnectDot task={task} lane={lane} onMouseDown={handleTaskMouseDown} />
                       </div>
                     );
                   })}
