@@ -1,3 +1,10 @@
+---
+type: evergreen
+created: 2026-04-03
+project: null
+tags: []
+---
+
 # Timeline Dashboard
 
 A self-hosted personal project timeline — swim-lane Gantt chart with a FastAPI backend and React frontend, backed by SQLite.
