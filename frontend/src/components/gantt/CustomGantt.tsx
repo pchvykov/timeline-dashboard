@@ -523,6 +523,13 @@ export function CustomGantt({ tasks, projects, people }: Props) {
       const clickDate = xToDate(clickX, viewStart, pxPerDay);
       const dateStr = format(clickDate, 'yyyy-MM-dd');
       const endStr = format(addDays(clickDate, 1), 'yyyy-MM-dd');
+
+      // Snap to the row the user clicked in — row 0 stays 0 (auto-layout sentinel
+      // which naturally resolves to row 0 when the slot is free).
+      const mouseYInScroll = e.clientY - rect.top + scrollRef.current.scrollTop;
+      const snap = getNearestSnapRow(mouseYInScroll);
+      const laneY = snap && snap.lane.id === lane.id ? snap.row : 0;
+
       createTask.mutate(
         {
           title: 'New task',
@@ -532,11 +539,12 @@ export function CustomGantt({ tasks, projects, people }: Props) {
           status: 'todo',
           priority: 2,
           density: 100,
+          lane_y: laneY,
         },
         { onSuccess: (t) => setSelectedTaskId(t.id) }
       );
     },
-    [viewStart, pxPerDay, createTask, setSelectedTaskId]
+    [viewStart, pxPerDay, createTask, setSelectedTaskId, getNearestSnapRow]
   );
 
   // ── Mouse event handlers ─────────────────────────────────────────────────
