@@ -68,7 +68,7 @@ class TaskBase(BaseModel):
     tags: str = "[]"
     notes: Optional[str] = None
     deadline: Optional[str] = None
-    lane_y: int = 0
+    lane_y: int = -1
 
 class TaskCreate(TaskBase):
     pass

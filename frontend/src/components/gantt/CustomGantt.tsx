@@ -5,11 +5,14 @@ import {
   useEffect,
   useState,
 } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { TaskDetailModal } from './TaskDetailModal';
 import { addDays, subDays, differenceInCalendarDays, format } from 'date-fns';
 import type { Task, Project, Person } from '../../lib/api';
+import { api } from '../../lib/api';
 import { useMoveTask, useUpdateTask, useCreateTask, useDeleteTask, useAddDependency, useDeleteDependency } from '../../hooks/useTasks';
 import { useUIStore } from '../../store/uiStore';
+import { useUndoStore } from '../../store/undoStore';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 const LANE_HEADER_WIDTH = 140;
@@ -230,6 +233,7 @@ function BezierArrow({
 
 // ── Main Component ───────────────────────────────────────────────────────────
 export function CustomGantt({ tasks, projects, people }: Props) {
+  const qc = useQueryClient();
   const moveTask = useMoveTask();
   const updateTask = useUpdateTask();
   const createTask = useCreateTask();
@@ -274,13 +278,13 @@ export function CustomGantt({ tasks, projects, people }: Props) {
   }, [setPxPerDay]);
 
   // ── Drag overlay state (minimal re-renders) ──────────────────────────────
-  const [dragOverlay, setDragOverlay] = useState<{
+  const [dragOverlays, setDragOverlays] = useState<Array<{
     taskId: number;
     x: number;
     y: number;
     width: number;
     color: string;
-  } | null>(null);
+  }>>([]);
   const [connectLine, setConnectLine] = useState<{
     sx: number; sy: number; ex: number; ey: number;
   } | null>(null);
@@ -364,8 +368,8 @@ export function CustomGantt({ tasks, projects, people }: Props) {
 
   const computedLaneY = useCallback(
     (task: Task, laneTasks: Task[]): number => {
-      // If already in DB with non-zero lane_y or already auto-placed, use that
-      if (task.lane_y !== 0) return task.lane_y;
+      // lane_y >= 0 means explicitly placed (including row 0); < 0 is the auto-layout sentinel
+      if (task.lane_y >= 0) return task.lane_y;
       if (autoLayoutRef.current[task.id] !== undefined) {
         return autoLayoutRef.current[task.id];
       }
@@ -407,10 +411,10 @@ export function CustomGantt({ tasks, projects, people }: Props) {
     []
   );
 
-  // Save auto-placements to DB (silent, once per task)
+  // Save auto-placements to DB (silent, once per task, skip row 0 which keeps sentinel)
   useEffect(() => {
     tasks.forEach((task) => {
-      if (task.lane_y === 0 && autoLayoutRef.current[task.id] !== undefined) {
+      if (task.lane_y < 0 && autoLayoutRef.current[task.id] !== undefined) {
         const computedY = autoLayoutRef.current[task.id];
         if (computedY !== 0 && !autoPlacedRef.current.has(task.id)) {
           autoPlacedRef.current.add(task.id);
@@ -428,7 +432,7 @@ export function CustomGantt({ tasks, projects, people }: Props) {
       // Compute min height needed
       let maxRow = 0;
       lane.tasks.forEach((task) => {
-        const laneY = task.lane_y !== 0
+        const laneY = task.lane_y >= 0
           ? task.lane_y
           : (autoLayoutRef.current[task.id] ?? 0);
         if (laneY > maxRow) maxRow = laneY;
@@ -466,7 +470,7 @@ export function CustomGantt({ tasks, projects, people }: Props) {
         if (!dates) return;
         const x = dateToX(dates.start, viewStart, pxPerDay);
         const w = Math.max(dateToX(dates.end, viewStart, pxPerDay) - x, 4);
-        const laneY = task.lane_y !== 0
+        const laneY = task.lane_y >= 0
           ? task.lane_y
           : (autoLayoutRef.current[task.id] ?? 0);
         const y = laneTop + laneY * TASK_ROW_HEIGHT + 4;
@@ -545,7 +549,8 @@ export function CustomGantt({ tasks, projects, people }: Props) {
       // which naturally resolves to row 0 when the slot is free).
       const mouseYInScroll = e.clientY - rect.top + scrollRef.current.scrollTop;
       const snap = getNearestSnapRow(mouseYInScroll);
-      const laneY = snap && snap.lane.id === lane.id ? snap.row : 0;
+      // Use -1 (auto-layout sentinel) if no snap found; explicit row otherwise
+      const laneY = snap && snap.lane.id === lane.id ? snap.row : -1;
 
       createTask.mutate(
         {
@@ -609,7 +614,24 @@ export function CustomGantt({ tasks, projects, people }: Props) {
           const screenX = rect.x - scrollRef.current.scrollLeft + scrollRect.left;
           const screenY = rect.y - scrollRef.current.scrollTop + scrollRect.top;
           const color = projectColor(task.project_id, projects);
-          setDragOverlay({ taskId: task.id, x: screenX, y: screenY, width: rect.w, color });
+          const overlays = [{ taskId: task.id, x: screenX, y: screenY, width: rect.w, color }];
+          // Add ghost bars for all co-selected tasks
+          if (dragState.current?.coTaskSnapshots) {
+            for (const coSnap of dragState.current.coTaskSnapshots) {
+              const coTask = tasks.find((t) => t.id === coSnap.taskId);
+              const coRect = taskRectMap.get(coSnap.taskId);
+              if (coTask && coRect) {
+                overlays.push({
+                  taskId: coSnap.taskId,
+                  x: coRect.x - scrollRef.current.scrollLeft + scrollRect.left,
+                  y: coRect.y - scrollRef.current.scrollTop + scrollRect.top,
+                  width: coRect.w,
+                  color: projectColor(coTask.project_id, projects),
+                });
+              }
+            }
+          }
+          setDragOverlays(overlays);
         }
       }
     },
@@ -688,7 +710,20 @@ export function CustomGantt({ tasks, projects, people }: Props) {
         const snappedScreenY = snap
           ? scrollRect.top - scrollRef.current.scrollTop + (laneTopMap[snap.lane.id] ?? 0) + snap.row * TASK_ROW_HEIGHT + 4
           : e.clientY - TASK_HEIGHT / 2;
-        setDragOverlay({ taskId: ds.taskId, x, y: snappedScreenY, width, color });
+        // Build overlay array: primary ghost at snapped Y, co-task ghosts at their original Y + horizontal shift
+        const overlays = [{ taskId: ds.taskId, x, y: snappedScreenY, width, color }];
+        if (ds.coTaskSnapshots) {
+          for (const coSnap of ds.coTaskSnapshots) {
+            const coTask = tasks.find((t) => t.id === coSnap.taskId);
+            const coRect = taskRectMap.get(coSnap.taskId);
+            if (!coTask || !coRect) continue;
+            const coNewStart = addDays(coSnap.originalStart, Math.round(dx / pxPerDay));
+            const coX = dateToX(coNewStart, viewStart, pxPerDay) - scrollRef.current.scrollLeft + scrollRect.left;
+            const coScreenY = coRect.y - scrollRef.current.scrollTop + scrollRect.top;
+            overlays.push({ taskId: coSnap.taskId, x: coX, y: coScreenY, width: coRect.w, color: projectColor(coTask.project_id, projects) });
+          }
+        }
+        setDragOverlays(overlays);
         return;
       }
 
@@ -706,7 +741,7 @@ export function CustomGantt({ tasks, projects, people }: Props) {
           tasks.find((t) => t.id === ds.taskId)?.project_id ?? null,
           projects
         );
-        setDragOverlay({ taskId: ds.taskId, x, y, width: Math.max(newWidth, 4), color });
+        setDragOverlays([{ taskId: ds.taskId, x, y, width: Math.max(newWidth, 4), color }]);
         return;
       }
 
@@ -724,7 +759,7 @@ export function CustomGantt({ tasks, projects, people }: Props) {
           tasks.find((t) => t.id === ds.taskId)?.project_id ?? null,
           projects
         );
-        setDragOverlay({ taskId: ds.taskId, x: newX, y, width: Math.max(newWidth, 4), color });
+        setDragOverlays([{ taskId: ds.taskId, x: newX, y, width: Math.max(newWidth, 4), color }]);
         return;
       }
     },
@@ -794,7 +829,7 @@ export function CustomGantt({ tasks, projects, people }: Props) {
       const ds = dragState.current;
       const dx = e.clientX - ds.startMouseX;
 
-      setDragOverlay(null);
+      setDragOverlays([]);
       setConnectLine(null);
 
       if (ds.type === 'connect-dep') {
@@ -859,31 +894,72 @@ export function CustomGantt({ tasks, projects, people }: Props) {
 
           const newStartStr = format(newStart, 'yyyy-MM-dd');
           const newEndStr = format(newEnd, 'yyyy-MM-dd');
-          if (newStartStr !== task.start_date || newEndStr !== task.end_date) {
-            const newDates = { id: ds.taskId, start_date: newStartStr, end_date: newEndStr };
-            moveTask.mutate(newDates);
-          }
 
-          const updates: Partial<Task> = {};
-          if (dropLane && dropLane.id !== ds.originalLaneKey) {
-            updates.assignee_id = dropLane.personId ?? null;
-          }
-          if (newLaneY !== ds.originalLaneY) {
-            updates.lane_y = newLaneY;
-          }
-          if (Object.keys(updates).length > 0) {
-            updateTask.mutate({ id: ds.taskId, data: updates });
-          }
+          const laneChanged = dropLane && dropLane.id !== ds.originalLaneKey;
+          const rowChanged = newLaneY !== ds.originalLaneY;
 
-          // Move co-selected tasks by the same date delta
-          if (ds.coTaskSnapshots && deltaDays !== 0) {
-            for (const snap of ds.coTaskSnapshots) {
-              moveTask.mutate({
-                id: snap.taskId,
-                start_date: format(addDays(snap.originalStart, deltaDays), 'yyyy-MM-dd'),
-                end_date: format(addDays(snap.originalEnd, deltaDays), 'yyyy-MM-dd'),
-              });
+          // ── Multi-task batch: single API calls + single undo entry ──────────
+          if (ds.coTaskSnapshots && ds.coTaskSnapshots.length > 0) {
+            const invalidate = () => qc.invalidateQueries({ queryKey: ['tasks'] });
+
+            // Build move records (primary + co-tasks)
+            type MoveRec = { id: number; newS: string; newE: string; origS: string; origE: string };
+            const moves: MoveRec[] = [
+              { id: ds.taskId, newS: newStartStr, newE: newEndStr,
+                origS: format(ds.originalStart, 'yyyy-MM-dd'), origE: format(ds.originalEnd, 'yyyy-MM-dd') },
+              ...ds.coTaskSnapshots.map((s) => ({
+                id: s.taskId,
+                newS: format(addDays(s.originalStart, deltaDays), 'yyyy-MM-dd'),
+                newE: format(addDays(s.originalEnd, deltaDays), 'yyyy-MM-dd'),
+                origS: format(s.originalStart, 'yyyy-MM-dd'),
+                origE: format(s.originalEnd, 'yyyy-MM-dd'),
+              })),
+            ];
+
+            // Build update records for lane/assignee changes
+            type UpdateRec = { id: number; newData: Partial<Task>; origData: Partial<Task> };
+            const updates: UpdateRec[] = [];
+            if (laneChanged || rowChanged) {
+              const newData: Partial<Task> = {};
+              const origData: Partial<Task> = {};
+              if (laneChanged) { newData.assignee_id = dropLane!.personId ?? null; origData.assignee_id = task.assignee_id; }
+              if (rowChanged) { newData.lane_y = newLaneY; origData.lane_y = task.lane_y; }
+              updates.push({ id: ds.taskId, newData, origData });
+              // Co-tasks follow primary lane change (keep their own rows)
+              if (laneChanged) {
+                for (const s of ds.coTaskSnapshots) {
+                  const ct = tasks.find((t) => t.id === s.taskId);
+                  if (ct) updates.push({ id: s.taskId, newData: { assignee_id: dropLane!.personId ?? null }, origData: { assignee_id: ct.assignee_id } });
+                }
+              }
             }
+
+            // Fire API calls (no mutation hooks → no individual undo entries)
+            Promise.all(moves.map((m) => api.moveTask(m.id, m.newS, m.newE))).then(invalidate);
+            if (updates.length > 0) Promise.all(updates.map((u) => api.updateTask(u.id, u.newData))).then(invalidate);
+
+            useUndoStore.getState().push({
+              label: `Move ${moves.length} tasks`,
+              undo: async () => {
+                await Promise.all(moves.map((m) => api.moveTask(m.id, m.origS, m.origE)));
+                if (updates.length > 0) await Promise.all(updates.map((u) => api.updateTask(u.id, u.origData)));
+                invalidate();
+              },
+              redo: async () => {
+                await Promise.all(moves.map((m) => api.moveTask(m.id, m.newS, m.newE)));
+                if (updates.length > 0) await Promise.all(updates.map((u) => api.updateTask(u.id, u.newData)));
+                invalidate();
+              },
+            });
+          } else {
+            // ── Single-task move: use mutation hooks (each push their own undo) ─
+            if (newStartStr !== task.start_date || newEndStr !== task.end_date) {
+              moveTask.mutate({ id: ds.taskId, start_date: newStartStr, end_date: newEndStr });
+            }
+            const upd: Partial<Task> = {};
+            if (laneChanged) upd.assignee_id = dropLane!.personId ?? null;
+            if (rowChanged) upd.lane_y = newLaneY;
+            if (Object.keys(upd).length > 0) updateTask.mutate({ id: ds.taskId, data: upd });
           }
         }
       } else if (ds.type === 'resize-right') {
@@ -900,7 +976,7 @@ export function CustomGantt({ tasks, projects, people }: Props) {
 
       dragState.current = null;
     },
-    [pxPerDay, addDependency, moveTask, updateTask, getNearestSnapRow, tasks, taskRectMap, dragOverLaneId, lanes, setPersonOrder]
+    [pxPerDay, addDependency, moveTask, updateTask, getNearestSnapRow, tasks, taskRectMap, dragOverLaneId, lanes, setPersonOrder, qc]
   );
 
   // Register global mouse events
@@ -1267,7 +1343,8 @@ export function CustomGantt({ tasks, projects, people }: Props) {
                     const color = projectColor(task.project_id, projects);
                     const statusBorderColor = STATUS_BORDER[task.status] ?? '#9ca3af';
 
-                    const isDragging = dragState.current?.taskId === task.id;
+                    const isDragging = dragState.current?.taskId === task.id ||
+                      (dragState.current?.coTaskSnapshots?.some((s) => s.taskId === task.id) ?? false);
                     const isDone = task.status === 'done';
                     const isSelected = selectedTaskIds.has(task.id);
                     // density 0–100 → opacity 0–1.0 linear; done tasks always muted
@@ -1407,23 +1484,24 @@ export function CustomGantt({ tasks, projects, people }: Props) {
         </div>
       </div>
 
-      {/* Drag overlay (fixed position) */}
-      {dragOverlay && (
+      {/* Drag overlays (fixed position, one per dragged task) */}
+      {dragOverlays.map((ov) => (
         <div
+          key={ov.taskId}
           style={{
             position: 'fixed',
-            left: dragOverlay.x,
-            top: dragOverlay.y,
-            width: dragOverlay.width,
+            left: ov.x,
+            top: ov.y,
+            width: ov.width,
             height: TASK_HEIGHT,
-            backgroundColor: dragOverlay.color + 'aa',
-            border: `2px dashed ${dragOverlay.color}`,
+            backgroundColor: ov.color + 'aa',
+            border: `2px dashed ${ov.color}`,
             borderRadius: 4,
             pointerEvents: 'none',
             zIndex: 200,
           }}
         />
-      )}
+      ))}
 
       {/* Connect line overlay */}
       {connectLine && (
@@ -1450,7 +1528,7 @@ export function CustomGantt({ tasks, projects, people }: Props) {
       )}
 
       {/* Instant hover tooltip */}
-      {tooltip && !dragOverlay && (
+      {tooltip && dragOverlays.length === 0 && (
         <div
           style={{
             position: 'fixed',
