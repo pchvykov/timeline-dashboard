@@ -898,14 +898,16 @@ export function CustomGantt({ tasks, projects, people }: Props) {
           const laneChanged = dropLane && dropLane.id !== ds.originalLaneKey;
           const rowChanged = newLaneY !== ds.originalLaneY;
 
-          // ── Multi-task batch: single API calls + single undo entry ──────────
+          // ── Multi-task batch: mutations with skipUndo + one manual undo entry ─
           if (ds.coTaskSnapshots && ds.coTaskSnapshots.length > 0) {
             const invalidate = () => qc.invalidateQueries({ queryKey: ['tasks'] });
             const newAssigneeId = dropLane?.personId ?? null;
             const primaryLaneChanged = !!(dropLane && dropLane.id !== ds.originalLaneKey);
 
-            // Undo/redo snapshots for moves
+            // Snapshots for the single undo/redo entry we'll push manually
             type MoveSnap = { id: number; newS: string; newE: string; origS: string; origE: string };
+            type UpdSnap  = { id: number; newData: Partial<Task>; origData: Partial<Task> };
+
             const moveSnaps: MoveSnap[] = [
               { id: ds.taskId, newS: newStartStr, newE: newEndStr,
                 origS: format(ds.originalStart, 'yyyy-MM-dd'), origE: format(ds.originalEnd, 'yyyy-MM-dd') },
@@ -918,39 +920,32 @@ export function CustomGantt({ tasks, projects, people }: Props) {
               })),
             ];
 
-            // Undo/redo snapshots for attribute updates
-            type UpdSnap = { id: number; newData: Partial<Task>; origData: Partial<Task> };
             const updSnaps: UpdSnap[] = [];
-
-            // Primary: lane + row
             const primNew: Partial<Task> = {};
             const primOrig: Partial<Task> = {};
             if (primaryLaneChanged) { primNew.assignee_id = newAssigneeId; primOrig.assignee_id = task.assignee_id; }
-            if (rowChanged) { primNew.lane_y = newLaneY; primOrig.lane_y = task.lane_y; }
+            if (rowChanged)         { primNew.lane_y = newLaneY;           primOrig.lane_y = task.lane_y; }
             if (Object.keys(primNew).length > 0) updSnaps.push({ id: ds.taskId, newData: primNew, origData: primOrig });
 
-            // Co-tasks: lane only (keep their own rows)
             if (primaryLaneChanged) {
               for (const s of ds.coTaskSnapshots) {
                 const ct = tasks.find((t) => t.id === s.taskId);
                 if (!ct) continue;
-                updSnaps.push({
-                  id: s.taskId,
-                  newData: { assignee_id: newAssigneeId },
-                  origData: { assignee_id: ct.assignee_id },
-                });
+                updSnaps.push({ id: s.taskId, newData: { assignee_id: newAssigneeId }, origData: { assignee_id: ct.assignee_id } });
               }
             }
 
-            // Fire all API calls together — skip no-op date moves to avoid backend errors
-            const apiFwd: Promise<unknown>[] = [
-              ...moveSnaps
-                .filter((m) => m.newS !== m.origS || m.newE !== m.origE)
-                .map((m) => api.moveTask(m.id, m.newS, m.newE)),
-              ...updSnaps.map((u) => api.updateTask(u.id, u.newData)),
-            ];
-            if (apiFwd.length > 0) Promise.all(apiFwd).then(invalidate).catch(invalidate);
+            // Fire via mutation hooks (skipUndo=true) so cache + network handling is proven
+            for (const m of moveSnaps) {
+              if (m.newS !== m.origS || m.newE !== m.origE) {
+                moveTask.mutate({ id: m.id, start_date: m.newS, end_date: m.newE, skipUndo: true });
+              }
+            }
+            for (const u of updSnaps) {
+              updateTask.mutate({ id: u.id, data: u.newData, skipUndo: true });
+            }
 
+            // Single undo/redo entry for the whole group (uses direct API + manual invalidate)
             useUndoStore.getState().push({
               label: `Move ${moveSnaps.length} tasks`,
               undo: async () => {

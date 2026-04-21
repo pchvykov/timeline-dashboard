@@ -34,9 +34,10 @@ export function usePeople() {
 export function useUpdateTask() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, data }: { id: number; data: Partial<Task> }) =>
+    mutationFn: ({ id, data }: { id: number; data: Partial<Task>; skipUndo?: boolean }) =>
       api.updateTask(id, data),
-    onMutate: ({ id, data }) => {
+    onMutate: ({ id, data, skipUndo }) => {
+      if (skipUndo) return;
       const prev = getCachedTasks(qc).find((t) => t.id === id);
       if (!prev) return;
       const prevData = Object.fromEntries(
@@ -57,9 +58,10 @@ export function useUpdateTask() {
 export function useMoveTask() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, start_date, end_date }: { id: number; start_date: string; end_date: string }) =>
+    mutationFn: ({ id, start_date, end_date }: { id: number; start_date: string; end_date: string; skipUndo?: boolean }) =>
       api.moveTask(id, start_date, end_date),
-    onMutate: ({ id, start_date, end_date }) => {
+    onMutate: ({ id, start_date, end_date, skipUndo }) => {
+      if (skipUndo) return;
       const prev = getCachedTasks(qc).find((t) => t.id === id);
       if (!prev) return;
       const origStart = prev.start_date ?? '';
