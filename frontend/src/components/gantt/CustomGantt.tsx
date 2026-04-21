@@ -901,10 +901,12 @@ export function CustomGantt({ tasks, projects, people }: Props) {
           // ── Multi-task batch: single API calls + single undo entry ──────────
           if (ds.coTaskSnapshots && ds.coTaskSnapshots.length > 0) {
             const invalidate = () => qc.invalidateQueries({ queryKey: ['tasks'] });
+            const newAssigneeId = dropLane?.personId ?? null;
+            const primaryLaneChanged = !!(dropLane && dropLane.id !== ds.originalLaneKey);
 
-            // Build move records (primary + co-tasks)
-            type MoveRec = { id: number; newS: string; newE: string; origS: string; origE: string };
-            const moves: MoveRec[] = [
+            // Undo/redo snapshots for moves
+            type MoveSnap = { id: number; newS: string; newE: string; origS: string; origE: string };
+            const moveSnaps: MoveSnap[] = [
               { id: ds.taskId, newS: newStartStr, newE: newEndStr,
                 origS: format(ds.originalStart, 'yyyy-MM-dd'), origE: format(ds.originalEnd, 'yyyy-MM-dd') },
               ...ds.coTaskSnapshots.map((s) => ({
@@ -916,38 +918,53 @@ export function CustomGantt({ tasks, projects, people }: Props) {
               })),
             ];
 
-            // Build update records for lane/assignee changes
-            type UpdateRec = { id: number; newData: Partial<Task>; origData: Partial<Task> };
-            const updates: UpdateRec[] = [];
-            if (laneChanged || rowChanged) {
-              const newData: Partial<Task> = {};
-              const origData: Partial<Task> = {};
-              if (laneChanged) { newData.assignee_id = dropLane!.personId ?? null; origData.assignee_id = task.assignee_id; }
-              if (rowChanged) { newData.lane_y = newLaneY; origData.lane_y = task.lane_y; }
-              updates.push({ id: ds.taskId, newData, origData });
-              // Co-tasks follow primary lane change (keep their own rows)
-              if (laneChanged) {
-                for (const s of ds.coTaskSnapshots) {
-                  const ct = tasks.find((t) => t.id === s.taskId);
-                  if (ct) updates.push({ id: s.taskId, newData: { assignee_id: dropLane!.personId ?? null }, origData: { assignee_id: ct.assignee_id } });
-                }
+            // Undo/redo snapshots for attribute updates
+            type UpdSnap = { id: number; newData: Partial<Task>; origData: Partial<Task> };
+            const updSnaps: UpdSnap[] = [];
+
+            // Primary: lane + row
+            const primNew: Partial<Task> = {};
+            const primOrig: Partial<Task> = {};
+            if (primaryLaneChanged) { primNew.assignee_id = newAssigneeId; primOrig.assignee_id = task.assignee_id; }
+            if (rowChanged) { primNew.lane_y = newLaneY; primOrig.lane_y = task.lane_y; }
+            if (Object.keys(primNew).length > 0) updSnaps.push({ id: ds.taskId, newData: primNew, origData: primOrig });
+
+            // Co-tasks: lane only (keep their own rows)
+            if (primaryLaneChanged) {
+              for (const s of ds.coTaskSnapshots) {
+                const ct = tasks.find((t) => t.id === s.taskId);
+                if (!ct) continue;
+                updSnaps.push({
+                  id: s.taskId,
+                  newData: { assignee_id: newAssigneeId },
+                  origData: { assignee_id: ct.assignee_id },
+                });
               }
             }
 
-            // Fire API calls (no mutation hooks → no individual undo entries)
-            Promise.all(moves.map((m) => api.moveTask(m.id, m.newS, m.newE))).then(invalidate);
-            if (updates.length > 0) Promise.all(updates.map((u) => api.updateTask(u.id, u.newData))).then(invalidate);
+            // Fire all API calls together — skip no-op date moves to avoid backend errors
+            const apiFwd: Promise<unknown>[] = [
+              ...moveSnaps
+                .filter((m) => m.newS !== m.origS || m.newE !== m.origE)
+                .map((m) => api.moveTask(m.id, m.newS, m.newE)),
+              ...updSnaps.map((u) => api.updateTask(u.id, u.newData)),
+            ];
+            if (apiFwd.length > 0) Promise.all(apiFwd).then(invalidate).catch(invalidate);
 
             useUndoStore.getState().push({
-              label: `Move ${moves.length} tasks`,
+              label: `Move ${moveSnaps.length} tasks`,
               undo: async () => {
-                await Promise.all(moves.map((m) => api.moveTask(m.id, m.origS, m.origE)));
-                if (updates.length > 0) await Promise.all(updates.map((u) => api.updateTask(u.id, u.origData)));
+                await Promise.all([
+                  ...moveSnaps.filter((m) => m.newS !== m.origS || m.newE !== m.origE).map((m) => api.moveTask(m.id, m.origS, m.origE)),
+                  ...updSnaps.map((u) => api.updateTask(u.id, u.origData)),
+                ]);
                 invalidate();
               },
               redo: async () => {
-                await Promise.all(moves.map((m) => api.moveTask(m.id, m.newS, m.newE)));
-                if (updates.length > 0) await Promise.all(updates.map((u) => api.updateTask(u.id, u.newData)));
+                await Promise.all([
+                  ...moveSnaps.filter((m) => m.newS !== m.origS || m.newE !== m.origE).map((m) => api.moveTask(m.id, m.newS, m.newE)),
+                  ...updSnaps.map((u) => api.updateTask(u.id, u.newData)),
+                ]);
                 invalidate();
               },
             });
