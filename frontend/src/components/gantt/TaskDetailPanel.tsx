@@ -458,7 +458,6 @@ export function TaskDetailPanel({ task, projects, people }: Props) {
       {/* Delete */}
       <button
         onClick={() => {
-          if (!confirm(`Delete "${task.title}"?`)) return;
           deleteTask.mutate(task.id);
           setSelectedTaskId(null);
         }}

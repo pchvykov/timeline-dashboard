@@ -379,9 +379,7 @@ export function Sidebar() {
                     title="Delete person"
                     onClick={(e) => {
                       e.stopPropagation();
-                      if (confirm(`Delete "${p.name}"? Their tasks will become unassigned.`)) {
-                        deletePerson.mutate(p.id);
-                      }
+                      deletePerson.mutate(p.id);
                     }}
                   >
                     ×

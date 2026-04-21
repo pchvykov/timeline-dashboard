@@ -8,7 +8,7 @@ import {
 import { TaskDetailModal } from './TaskDetailModal';
 import { addDays, subDays, differenceInCalendarDays, format } from 'date-fns';
 import type { Task, Project, Person } from '../../lib/api';
-import { useMoveTask, useUpdateTask, useCreateTask, useAddDependency, useDeleteDependency } from '../../hooks/useTasks';
+import { useMoveTask, useUpdateTask, useCreateTask, useDeleteTask, useAddDependency, useDeleteDependency } from '../../hooks/useTasks';
 import { useUIStore } from '../../store/uiStore';
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -233,6 +233,7 @@ export function CustomGantt({ tasks, projects, people }: Props) {
   const moveTask = useMoveTask();
   const updateTask = useUpdateTask();
   const createTask = useCreateTask();
+  const deleteTask = useDeleteTask();
   const addDependency = useAddDependency();
   const deleteDependency = useDeleteDependency();
   const setSelectedTaskId = useUIStore((s) => s.setSelectedTaskId);
@@ -290,6 +291,9 @@ export function CustomGantt({ tasks, projects, people }: Props) {
 
   // ── Multi-select state ───────────────────────────────────────────────────
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<number>>(new Set());
+  // Ref so event callbacks always read the latest set without stale-closure issues
+  const selectedTaskIdsRef = useRef<Set<number>>(selectedTaskIds);
+  useEffect(() => { selectedTaskIdsRef.current = selectedTaskIds; }, [selectedTaskIds]);
   const selectBoxStart = useRef<{ screenX: number; screenY: number } | null>(null);
   const [selectBoxRect, setSelectBoxRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
 
@@ -585,9 +589,10 @@ export function CustomGantt({ tasks, projects, people }: Props) {
         originalLaneKey: laneKey,
       };
 
-      // Capture co-selected tasks for batch move
-      if (dragType === 'move' && selectedTaskIds.has(task.id)) {
-        dragState.current.coTaskSnapshots = [...selectedTaskIds]
+      // Capture co-selected tasks for batch move (use ref for latest set)
+      const currentSelection = selectedTaskIdsRef.current;
+      if (dragType === 'move' && currentSelection.has(task.id)) {
+        dragState.current.coTaskSnapshots = [...currentSelection]
           .filter((id) => id !== task.id)
           .flatMap((id) => {
             const t = tasks.find((t) => t.id === id);
@@ -608,7 +613,7 @@ export function CustomGantt({ tasks, projects, people }: Props) {
         }
       }
     },
-    [taskRectMap, projects, selectedTaskIds, tasks]
+    [taskRectMap, projects, tasks]
   );
 
   const handleMouseMove = useCallback(
@@ -821,13 +826,16 @@ export function CustomGantt({ tasks, projects, people }: Props) {
 
       const dy = e.clientY - ds.startMouseY;
       if (dx * dx + dy * dy < 25) {
-        // It was a click — select (Shift adds to selection; plain click replaces it)
+        // It was a click — select/deselect
         setSelectedTaskIds((prev) => {
           if (e.shiftKey) {
             const next = new Set(prev);
             if (next.has(ds.taskId)) next.delete(ds.taskId); else next.add(ds.taskId);
             return next;
           }
+          // Clicking an already-selected task keeps the multi-selection intact
+          // (so you can immediately drag the group without losing selection)
+          if (prev.has(ds.taskId) && prev.size > 1) return prev;
           return new Set([ds.taskId]);
         });
         dragState.current = null;
@@ -905,14 +913,32 @@ export function CustomGantt({ tasks, projects, people }: Props) {
     };
   }, [handleMouseMove, handleMouseUp]);
 
-  // Escape clears multi-selection
+  // Escape clears selection; Cmd+Backspace/Delete deletes selected tasks
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setSelectedTaskIds(new Set());
+      if (e.key === 'Escape') {
+        setSelectedTaskIds(new Set());
+        return;
+      }
+      const isDelete = e.key === 'Backspace' || e.key === 'Delete';
+      if ((e.metaKey || e.ctrlKey) && isDelete) {
+        const tag = (e.target as HTMLElement).tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+        e.preventDefault();
+        const sel = selectedTaskIdsRef.current;
+        if (sel.size > 0) {
+          sel.forEach((id) => deleteTask.mutate(id));
+          setSelectedTaskIds(new Set());
+          setSelectedTaskId(null);
+        } else if (selectedTaskId) {
+          deleteTask.mutate(selectedTaskId);
+          setSelectedTaskId(null);
+        }
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  }, [deleteTask, selectedTaskId, setSelectedTaskId]);
 
   // Wheel / pinch zoom (Ctrl+wheel = pinch on trackpad) — continuous, anchored to cursor
   useEffect(() => {
