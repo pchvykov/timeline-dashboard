@@ -921,16 +921,20 @@ export function CustomGantt({ tasks, projects, people }: Props) {
             ];
 
             const updSnaps: UpdSnap[] = [];
+
+            // Primary: lane + row
             const primNew: Partial<Task> = {};
             const primOrig: Partial<Task> = {};
             if (primaryLaneChanged) { primNew.assignee_id = newAssigneeId; primOrig.assignee_id = task.assignee_id; }
             if (rowChanged)         { primNew.lane_y = newLaneY;           primOrig.lane_y = task.lane_y; }
             if (Object.keys(primNew).length > 0) updSnaps.push({ id: ds.taskId, newData: primNew, origData: primOrig });
 
-            if (primaryLaneChanged) {
+            // Co-tasks: move to drop lane whenever their current assignee differs
+            // (direct comparison, no dependence on primaryLaneChanged)
+            if (dropLane) {
               for (const s of ds.coTaskSnapshots) {
                 const ct = tasks.find((t) => t.id === s.taskId);
-                if (!ct) continue;
+                if (!ct || ct.assignee_id === newAssigneeId) continue;
                 updSnaps.push({ id: s.taskId, newData: { assignee_id: newAssigneeId }, origData: { assignee_id: ct.assignee_id } });
               }
             }
