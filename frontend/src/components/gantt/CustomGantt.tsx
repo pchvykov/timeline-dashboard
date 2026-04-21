@@ -245,8 +245,6 @@ export function CustomGantt({ tasks, projects, people }: Props) {
   const dragState = useRef<DragState | null>(null);
   const resizeLane = useRef<{ laneId: string; startY: number; startHeight: number } | null>(null);
   const autoPlacedRef = useRef<Set<number>>(new Set());
-  const undoStack = useRef<Array<{ undo: () => void; redo: () => void }>>([]);
-  const redoStack = useRef<Array<{ undo: () => void; redo: () => void }>>([]);
   const pendingScrollLeft = useRef<number | null>(null);
   // Tracks whether the initial "scroll to today" has already run
   const didScrollToToday = useRef(false);
@@ -765,57 +763,33 @@ export function CustomGantt({ tasks, projects, people }: Props) {
           const task = tasks.find((t) => t.id === ds.taskId);
           if (!task) { dragState.current = null; return; }
 
-          const undoFns: (() => void)[] = [];
-          const redoFns: (() => void)[] = [];
-
           const newStartStr = format(newStart, 'yyyy-MM-dd');
           const newEndStr = format(newEnd, 'yyyy-MM-dd');
           if (newStartStr !== task.start_date || newEndStr !== task.end_date) {
-            const origDates = { id: ds.taskId, start_date: task.start_date ?? newStartStr, end_date: task.end_date ?? newEndStr };
             const newDates = { id: ds.taskId, start_date: newStartStr, end_date: newEndStr };
             moveTask.mutate(newDates);
-            undoFns.push(() => moveTask.mutate(origDates));
-            redoFns.push(() => moveTask.mutate(newDates));
           }
 
           const updates: Partial<Task> = {};
-          const undoUpdates: Partial<Task> = {};
           if (dropLane && dropLane.id !== ds.originalLaneKey) {
             updates.assignee_id = dropLane.personId ?? null;
-            undoUpdates.assignee_id = ds.originalAssigneeId;
           }
           if (newLaneY !== ds.originalLaneY) {
             updates.lane_y = newLaneY;
-            undoUpdates.lane_y = ds.originalLaneY;
           }
           if (Object.keys(updates).length > 0) {
             updateTask.mutate({ id: ds.taskId, data: updates });
-            undoFns.push(() => updateTask.mutate({ id: ds.taskId, data: undoUpdates }));
-            redoFns.push(() => updateTask.mutate({ id: ds.taskId, data: updates }));
-          }
-
-          if (undoFns.length > 0) {
-            undoStack.current.push({ undo: () => undoFns.forEach(f => f()), redo: () => redoFns.forEach(f => f()) });
-            redoStack.current = [];
           }
         }
       } else if (ds.type === 'resize-right') {
         const newEnd = addDays(ds.originalEnd, deltaDays);
         if (newEnd > ds.originalStart) {
-          const origDates = { id: ds.taskId, start_date: format(ds.originalStart, 'yyyy-MM-dd'), end_date: format(ds.originalEnd, 'yyyy-MM-dd') };
-          const newDates = { id: ds.taskId, start_date: format(ds.originalStart, 'yyyy-MM-dd'), end_date: format(newEnd, 'yyyy-MM-dd') };
-          moveTask.mutate(newDates);
-          undoStack.current.push({ undo: () => moveTask.mutate(origDates), redo: () => moveTask.mutate(newDates) });
-          redoStack.current = [];
+          moveTask.mutate({ id: ds.taskId, start_date: format(ds.originalStart, 'yyyy-MM-dd'), end_date: format(newEnd, 'yyyy-MM-dd') });
         }
       } else if (ds.type === 'resize-left') {
         const newStart = addDays(ds.originalStart, deltaDays);
         if (newStart < ds.originalEnd) {
-          const origDates = { id: ds.taskId, start_date: format(ds.originalStart, 'yyyy-MM-dd'), end_date: format(ds.originalEnd, 'yyyy-MM-dd') };
-          const newDates = { id: ds.taskId, start_date: format(newStart, 'yyyy-MM-dd'), end_date: format(ds.originalEnd, 'yyyy-MM-dd') };
-          moveTask.mutate(newDates);
-          undoStack.current.push({ undo: () => moveTask.mutate(origDates), redo: () => moveTask.mutate(newDates) });
-          redoStack.current = [];
+          moveTask.mutate({ id: ds.taskId, start_date: format(newStart, 'yyyy-MM-dd'), end_date: format(ds.originalEnd, 'yyyy-MM-dd') });
         }
       }
 
@@ -833,25 +807,6 @@ export function CustomGantt({ tasks, projects, people }: Props) {
       window.removeEventListener('mouseup', handleMouseUp);
     };
   }, [handleMouseMove, handleMouseUp]);
-
-  // Undo / redo key binding (Cmd+Z / Cmd+Shift+Z)
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      const mod = e.metaKey || e.ctrlKey;
-      if (!mod) return;
-      if (e.key === 'z' && !e.shiftKey) {
-        e.preventDefault();
-        const action = undoStack.current.pop();
-        if (action) { action.undo(); redoStack.current.push(action); }
-      } else if (e.key === 'z' && e.shiftKey) {
-        e.preventDefault();
-        const action = redoStack.current.pop();
-        if (action) { action.redo(); undoStack.current.push(action); }
-      }
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, []);
 
   // Wheel / pinch zoom (Ctrl+wheel = pinch on trackpad) — continuous, anchored to cursor
   useEffect(() => {
