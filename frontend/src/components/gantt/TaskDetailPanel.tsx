@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect, useCallback } from 'react';
+import { useMemo, useState, useEffect, useCallback, useRef } from 'react';
 import type { Task, Project, Person } from '../../lib/api';
 import { useUpdateTask, useDeleteTask } from '../../hooks/useTasks';
 import { useUIStore } from '../../store/uiStore';
@@ -86,6 +86,7 @@ export function TaskDetailPanel({ task, projects, people }: Props) {
   const setSelectedTaskId = useUIStore((s) => s.setSelectedTaskId);
   const updateTask = useUpdateTask();
   const deleteTask = useDeleteTask();
+  const migratedRef = useRef<Set<number>>(new Set());
 
   const project = useMemo(
     () => projects.find((p) => p.id === task.project_id),
@@ -117,6 +118,29 @@ export function TaskDetailPanel({ task, projects, people }: Props) {
     setChecklist(c);
     setShowChecklist(c.length > 0);
   }, [task.id, task.notes, task.description]);
+
+  // One-time migration: move markdown checklist items from description → UI checklist
+  useEffect(() => {
+    if (!task.description || migratedRef.current.has(task.id)) return;
+    const pattern = /^[ \t]*-\s*\[([ xX])\]\s*(.+)$/gm;
+    const matches = [...task.description.matchAll(pattern)];
+    if (matches.length === 0) return;
+    migratedRef.current.add(task.id);
+
+    const migrated: ChecklistItem[] = matches.map((m) => ({
+      id: Math.random().toString(36).slice(2),
+      text: m[2].trim(),
+      done: m[1].toLowerCase() === 'x',
+    }));
+    const cleanedDesc = task.description.replace(/^[ \t]*-\s*\[([ xX])\]\s*.+\n?/gm, '').trim() || null;
+    const { freeform: f, checklist: c } = parseNotes(task.notes);
+    const merged = [...c, ...migrated];
+
+    updateTask.mutate({ id: task.id, data: { description: cleanedDesc, notes: serializeNotes(f, merged) } });
+    setDescription(cleanedDesc ?? '');
+    setChecklist(merged);
+    setShowChecklist(true);
+  }, [task.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleUpdate = useCallback((data: Partial<Task>) => {
     updateTask.mutate({ id: task.id, data });
@@ -163,7 +187,7 @@ export function TaskDetailPanel({ task, projects, people }: Props) {
 
   return (
     <div
-      className="w-[360px] flex-shrink-0 border-l overflow-y-auto p-4 flex flex-col gap-4"
+      className="w-full flex-shrink-0 border-l overflow-y-auto p-4 flex flex-col gap-4"
       style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-elevated)' }}
     >
       {/* Header */}

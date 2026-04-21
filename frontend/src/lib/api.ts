@@ -97,4 +97,10 @@ export const api = {
     request<Project>('/projects', { method: 'POST', body: JSON.stringify(data) }),
 
   getPeople: () => request<Person[]>('/people'),
+  createPerson: (data: Partial<Person>) =>
+    request<Person>('/people', { method: 'POST', body: JSON.stringify(data) }),
+  updatePerson: (id: number, data: Partial<Person>) =>
+    request<Person>(`/people/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deletePerson: (id: number) =>
+    request<void>(`/people/${id}`, { method: 'DELETE' }),
 };

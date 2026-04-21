@@ -24,6 +24,8 @@ interface UIState {
   setPxPerDay: (v: number) => void;
   laneHeights: Record<string, number>;
   setLaneHeight: (laneId: string, height: number) => void;
+  detailPanelWidth: number;
+  setDetailPanelWidth: (w: number) => void;
 }
 
 export const useUIStore = create<UIState>()(
@@ -85,6 +87,9 @@ export const useUIStore = create<UIState>()(
       laneHeights: {},
       setLaneHeight: (laneId, height) =>
         set((s) => ({ laneHeights: { ...s.laneHeights, [laneId]: height } })),
+
+      detailPanelWidth: 360,
+      setDetailPanelWidth: (w) => set({ detailPanelWidth: Math.max(240, Math.min(700, w)) }),
     }),
     {
       name: 'personal-os-ui',
@@ -100,6 +105,7 @@ export const useUIStore = create<UIState>()(
         hideDoneTasks: s.hideDoneTasks,
         pxPerDay: s.pxPerDay,
         laneHeights: s.laneHeights,
+        detailPanelWidth: s.detailPanelWidth,
       }),
       merge: (persisted: unknown, current: UIState): UIState => {
         const p = persisted as Partial<{
@@ -112,6 +118,7 @@ export const useUIStore = create<UIState>()(
           hideDoneTasks: boolean;
           pxPerDay: number;
           laneHeights: Record<string, number>;
+          detailPanelWidth: number;
         }>;
         return {
           ...current,
@@ -124,6 +131,7 @@ export const useUIStore = create<UIState>()(
           ...(p.hideDoneTasks !== undefined && { hideDoneTasks: p.hideDoneTasks }),
           ...(p.pxPerDay !== undefined && { pxPerDay: p.pxPerDay }),
           laneHeights: p.laneHeights ?? {},
+          detailPanelWidth: p.detailPanelWidth ?? 360,
         };
       },
     }

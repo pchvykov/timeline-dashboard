@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
-import type { Task, Project, TaskDependency } from '../lib/api';
+import type { Task, Project, Person, TaskDependency } from '../lib/api';
 import { useUndoStore } from '../store/undoStore';
 
 // Helper: collect all tasks from any cached variant of the ['tasks'] query
@@ -128,6 +128,39 @@ export function useUpdateProject() {
     mutationFn: ({ id, data }: { id: number; data: Partial<Project> }) =>
       api.updateProject(id, data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['projects'] }),
+  });
+}
+
+export function useCreateProject() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: Partial<Project>) => api.createProject(data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['projects'] }),
+  });
+}
+
+export function useCreatePerson() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: Partial<Person>) => api.createPerson(data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['people'] }),
+  });
+}
+
+export function useUpdatePerson() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, data }: { id: number; data: Partial<Person> }) =>
+      api.updatePerson(id, data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['people'] }),
+  });
+}
+
+export function useDeletePerson() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => api.deletePerson(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['people'] }),
   });
 }
 

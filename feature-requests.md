@@ -10,15 +10,17 @@ tags: []
 Start implementing *from the bottom*; cross out ones that are complete
 
 1. Think how to manage 'backlog' or 'optional' tasks
-2. Some automation on vertical alignment? Perhaps group by project, or horizontally align by 'kind' or vertically. Or at least remove blank space from top of lane...?
-3. Selection UI: click selects a task, allow draggin a box to selecet multiple tasks at once to drag them around
-4. UI still jumpy - clean up, make more smooth. E.g., ghost task jumps when first click, then aligns when start to drag. Same for resize.
-5. Some task descriptions have checklists - make these UI checklists in side panel, and remove the checklist from notes (so currently we have checklist in notes, I want this instead to be in the description - and for all tasks with existing description checklists, move them to this UI format)
-6. Make side panel width resizable (and remember it - so when I click new task, it opens with the last width I had it at)
-7. Create / archive / rename projects and people in the left panel
-8. Undo / redo stack should track and and all DB changes - edits to entries, task creation / deletion, etc
-9. Task transparency - keep text opaque even when task is transparent
-10. ~~Task transparency - make linear with density, from 0 to 100. So 0 density = 0 opacity.~~
-11. ~~zoom currently recenters on today - have it zoom relative to current cursor position~~
-12. ~~currently completed tasks disappear fom the timeline - should stay there perpetually, just transparent and with dashed border~~
-13. ~~make a new git repo for the dashboard. Add entire dashboard folder to git ignore of the parent repo - is this a safe setup to avoid conflicts and overlaps? check that the dashboard repo can properly work as stand-alone product, and that it integrates cleanly with the parent system. Future dashboard updates should go to this rep~~
+2. Set up system for how to deal with missed tasks; how to deal with flexible-timeline tasks vs hard-timeline. Auto-reprioritize system
+3. Task priority visualization
+4. Task transparency - keep text opaque even when task is transparent
+5. Some automation on vertical alignment? Perhaps group by project, or horizontally align by 'kind' or vertically. Or at least remove blank space from top of lane...?
+6. Selection UI: click selects a task, allow draggin a box to selecet multiple tasks at once to then drag them around
+7. UI still jumpy - clean up, make more smooth. E.g., ghost task jumps when first click and hold, then aligns when start to drag. Same for resize.
+8. Some task descriptions have checklists - make these UI checklists in side panel, and remove the checklist from notes (so currently we have checklist in notes, I want this instead to be in the description - and for all tasks with existing description checklists, move them to this UI format)
+9. Make right side panel width resizable (and remember it - so when I click new task, it opens with the last width I had it at)
+10. Create / archive / rename projects and people in the left panel
+11. ~~Undo / redo stack should track and and all DB changes - edits to entries, task creation / deletion, etc~~
+12. ~~Task transparency - make linear with density, from 0 to 100. So 0 density = 0 opacity.~~
+13. ~~zoom currently recenters on today - have it zoom relative to current cursor position~~
+14. ~~currently completed tasks disappear fom the timeline - should stay there perpetually, just transparent and with dashed border~~
+15. ~~make a new git repo for the dashboard. Add entire dashboard folder to git ignore of the parent repo - is this a safe setup to avoid conflicts and overlaps? check that the dashboard repo can properly work as stand-alone product, and that it integrates cleanly with the parent system. Future dashboard updates should go to this rep~~

@@ -39,6 +39,11 @@ class PersonBase(BaseModel):
 class PersonCreate(PersonBase):
     pass
 
+class PersonUpdate(BaseModel):
+    name: Optional[str] = None
+    color: Optional[str] = None
+    avatar_initials: Optional[str] = None
+
 class PersonOut(PersonBase):
     id: int
     created_at: str

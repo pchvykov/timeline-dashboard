@@ -566,9 +566,12 @@ export function CustomGantt({ tasks, projects, people }: Props) {
 
       if (dragType !== 'connect-dep') {
         const rect = taskRectMap.get(task.id);
-        if (rect) {
+        if (rect && scrollRef.current) {
+          const scrollRect = scrollRef.current.getBoundingClientRect();
+          const screenX = rect.x - scrollRef.current.scrollLeft + scrollRect.left;
+          const screenY = rect.y - scrollRef.current.scrollTop + scrollRect.top;
           const color = projectColor(task.project_id, projects);
-          setDragOverlay({ taskId: task.id, x: e.clientX - 60, y: e.clientY - 14, width: rect.w, color });
+          setDragOverlay({ taskId: task.id, x: screenX, y: screenY, width: rect.w, color });
         }
       }
     },
@@ -647,12 +650,13 @@ export function CustomGantt({ tasks, projects, people }: Props) {
         if (!rect || !scrollRef.current) return;
         const scrollRect = scrollRef.current.getBoundingClientRect();
         const x = rect.x - scrollRef.current.scrollLeft + scrollRect.left;
+        const y = rect.y - scrollRef.current.scrollTop + scrollRect.top;
         const newWidth = dateToX(newEnd, viewStart, pxPerDay) - rect.x;
         const color = projectColor(
           tasks.find((t) => t.id === ds.taskId)?.project_id ?? null,
           projects
         );
-        setDragOverlay({ taskId: ds.taskId, x, y: e.clientY - 14, width: Math.max(newWidth, 4), color });
+        setDragOverlay({ taskId: ds.taskId, x, y, width: Math.max(newWidth, 4), color });
         return;
       }
 
@@ -664,12 +668,13 @@ export function CustomGantt({ tasks, projects, people }: Props) {
         if (!rect || !scrollRef.current) return;
         const scrollRect = scrollRef.current.getBoundingClientRect();
         const newX = dateToX(newStart, viewStart, pxPerDay) - scrollRef.current.scrollLeft + scrollRect.left;
+        const y = rect.y - scrollRef.current.scrollTop + scrollRect.top;
         const newWidth = dateToX(ds.originalEnd, viewStart, pxPerDay) - dateToX(newStart, viewStart, pxPerDay);
         const color = projectColor(
           tasks.find((t) => t.id === ds.taskId)?.project_id ?? null,
           projects
         );
-        setDragOverlay({ taskId: ds.taskId, x: newX, y: e.clientY - 14, width: Math.max(newWidth, 4), color });
+        setDragOverlay({ taskId: ds.taskId, x: newX, y, width: Math.max(newWidth, 4), color });
         return;
       }
     },
