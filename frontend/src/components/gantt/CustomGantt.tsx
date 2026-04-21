@@ -51,6 +51,13 @@ interface Lane {
   tasks: Task[];
 }
 
+interface CoTaskSnapshot {
+  taskId: number;
+  originalStart: Date;
+  originalEnd: Date;
+  originalLaneY: number;
+}
+
 interface DragState {
   taskId: number;
   type: 'move' | 'resize-left' | 'resize-right' | 'connect-dep';
@@ -61,6 +68,7 @@ interface DragState {
   originalLaneY: number;
   originalAssigneeId: number | null;
   originalLaneKey: string;
+  coTaskSnapshots?: CoTaskSnapshot[];
 }
 
 interface TaskRect {
@@ -279,6 +287,11 @@ export function CustomGantt({ tasks, projects, people }: Props) {
   const [dragOverLaneId, setDragOverLaneId] = useState<string | null>(null);
   const laneReorder = useRef<{ srcLaneId: string; startY: number } | null>(null);
   const [tooltip, setTooltip] = useState<{ text: string; x: number; y: number } | null>(null);
+
+  // ── Multi-select state ───────────────────────────────────────────────────
+  const [selectedTaskIds, setSelectedTaskIds] = useState<Set<number>>(new Set());
+  const selectBoxStart = useRef<{ screenX: number; screenY: number } | null>(null);
+  const [selectBoxRect, setSelectBoxRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
 
   // ── Compute view range from task dates ──────────────────────────────────
   const { viewStart, viewEnd } = useMemo(() => {
@@ -572,6 +585,18 @@ export function CustomGantt({ tasks, projects, people }: Props) {
         originalLaneKey: laneKey,
       };
 
+      // Capture co-selected tasks for batch move
+      if (dragType === 'move' && selectedTaskIds.has(task.id)) {
+        dragState.current.coTaskSnapshots = [...selectedTaskIds]
+          .filter((id) => id !== task.id)
+          .flatMap((id) => {
+            const t = tasks.find((t) => t.id === id);
+            const d = t ? getDisplayDates(t) : null;
+            if (!t || !d) return [];
+            return [{ taskId: id, originalStart: d.start, originalEnd: d.end, originalLaneY: t.lane_y }];
+          });
+      }
+
       if (dragType !== 'connect-dep') {
         const rect = taskRectMap.get(task.id);
         if (rect && scrollRef.current) {
@@ -583,11 +608,23 @@ export function CustomGantt({ tasks, projects, people }: Props) {
         }
       }
     },
-    [taskRectMap, projects]
+    [taskRectMap, projects, selectedTaskIds, tasks]
   );
 
   const handleMouseMove = useCallback(
     (e: MouseEvent) => {
+      // Rubber-band selection box
+      if (selectBoxStart.current && !dragState.current) {
+        const { screenX, screenY } = selectBoxStart.current;
+        setSelectBoxRect({
+          x: Math.min(screenX, e.clientX),
+          y: Math.min(screenY, e.clientY),
+          w: Math.abs(e.clientX - screenX),
+          h: Math.abs(e.clientY - screenY),
+        });
+        return;
+      }
+
       // Lane resize
       if (resizeLane.current) {
         const dy = e.clientY - resizeLane.current.startY;
@@ -691,6 +728,35 @@ export function CustomGantt({ tasks, projects, people }: Props) {
 
   const handleMouseUp = useCallback(
     (e: MouseEvent) => {
+      // Rubber-band selection end
+      if (selectBoxStart.current) {
+        const start = selectBoxStart.current;
+        selectBoxStart.current = null;
+        setSelectBoxRect(null);
+        const x1 = Math.min(start.screenX, e.clientX);
+        const y1 = Math.min(start.screenY, e.clientY);
+        const x2 = Math.max(start.screenX, e.clientX);
+        const y2 = Math.max(start.screenY, e.clientY);
+        if (x2 - x1 > 5 && y2 - y1 > 5 && scrollRef.current) {
+          const el = scrollRef.current;
+          const sr = el.getBoundingClientRect();
+          const cx1 = x1 - sr.left + el.scrollLeft;
+          const cy1 = y1 - sr.top + el.scrollTop;
+          const cx2 = x2 - sr.left + el.scrollLeft;
+          const cy2 = y2 - sr.top + el.scrollTop;
+          const newSel = new Set<number>();
+          for (const [taskId, rect] of taskRectMap.entries()) {
+            if (rect.x < cx2 && rect.x + rect.w > cx1 && rect.y < cy2 && rect.y + rect.h > cy1) {
+              newSel.add(taskId);
+            }
+          }
+          setSelectedTaskIds(newSel);
+        } else {
+          setSelectedTaskIds(new Set());
+        }
+        return;
+      }
+
       // Lane resize end
       if (resizeLane.current) {
         resizeLane.current = null;
@@ -755,8 +821,15 @@ export function CustomGantt({ tasks, projects, people }: Props) {
 
       const dy = e.clientY - ds.startMouseY;
       if (dx * dx + dy * dy < 25) {
-        // It was a click — open detail modal
-        setSelectedTaskId(ds.taskId);
+        // It was a click — select (Shift adds to selection; plain click replaces it)
+        setSelectedTaskIds((prev) => {
+          if (e.shiftKey) {
+            const next = new Set(prev);
+            if (next.has(ds.taskId)) next.delete(ds.taskId); else next.add(ds.taskId);
+            return next;
+          }
+          return new Set([ds.taskId]);
+        });
         dragState.current = null;
         return;
       }
@@ -793,6 +866,17 @@ export function CustomGantt({ tasks, projects, people }: Props) {
           if (Object.keys(updates).length > 0) {
             updateTask.mutate({ id: ds.taskId, data: updates });
           }
+
+          // Move co-selected tasks by the same date delta
+          if (ds.coTaskSnapshots && deltaDays !== 0) {
+            for (const snap of ds.coTaskSnapshots) {
+              moveTask.mutate({
+                id: snap.taskId,
+                start_date: format(addDays(snap.originalStart, deltaDays), 'yyyy-MM-dd'),
+                end_date: format(addDays(snap.originalEnd, deltaDays), 'yyyy-MM-dd'),
+              });
+            }
+          }
         }
       } else if (ds.type === 'resize-right') {
         const newEnd = addDays(ds.originalEnd, deltaDays);
@@ -808,7 +892,7 @@ export function CustomGantt({ tasks, projects, people }: Props) {
 
       dragState.current = null;
     },
-    [pxPerDay, addDependency, moveTask, updateTask, getNearestSnapRow, tasks, taskRectMap, setSelectedTaskId, dragOverLaneId, lanes, setPersonOrder]
+    [pxPerDay, addDependency, moveTask, updateTask, getNearestSnapRow, tasks, taskRectMap, dragOverLaneId, lanes, setPersonOrder]
   );
 
   // Register global mouse events
@@ -820,6 +904,15 @@ export function CustomGantt({ tasks, projects, people }: Props) {
       window.removeEventListener('mouseup', handleMouseUp);
     };
   }, [handleMouseMove, handleMouseUp]);
+
+  // Escape clears multi-selection
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setSelectedTaskIds(new Set());
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   // Wheel / pinch zoom (Ctrl+wheel = pinch on trackpad) — continuous, anchored to cursor
   useEffect(() => {
@@ -1106,6 +1199,10 @@ export function CustomGantt({ tasks, projects, people }: Props) {
                 <div
                   key={lane.id}
                   onDoubleClick={(e) => handleLaneDoubleClick(e, lane)}
+                  onMouseDown={(e) => {
+                    if (e.button !== 0) return;
+                    selectBoxStart.current = { screenX: e.clientX, screenY: e.clientY };
+                  }}
                   style={{
                     position: 'absolute',
                     top: laneTop,
@@ -1146,6 +1243,7 @@ export function CustomGantt({ tasks, projects, people }: Props) {
 
                     const isDragging = dragState.current?.taskId === task.id;
                     const isDone = task.status === 'done';
+                    const isSelected = selectedTaskIds.has(task.id);
                     // density 0–100 → opacity 0–1.0 linear; done tasks always muted
                     const densityOpacity = isDone ? 0.28 : 0.1 + (task.density / 100) * 0.9;
 
@@ -1162,21 +1260,28 @@ export function CustomGantt({ tasks, projects, people }: Props) {
                           width: w,
                           height: TASK_HEIGHT,
                           backgroundColor: isDone ? color + '33' : color + 'cc',
-                          border: isDone ? `1.5px dashed ${color}88` : `none`,
-                          borderLeft: isDone ? `1.5px dashed ${color}88` : `3px solid ${statusBorderColor}`,
+                          border: isSelected
+                            ? `2px solid white`
+                            : isDone ? `1.5px dashed ${color}88` : `none`,
+                          borderLeft: isSelected
+                            ? `2px solid white`
+                            : isDone ? `1.5px dashed ${color}88` : `3px solid ${statusBorderColor}`,
                           borderRadius: task.type === 'milestone' ? '3px' : '4px',
                           display: 'flex',
                           alignItems: 'center',
                           paddingLeft: 5,
                           cursor: 'grab',
                           userSelect: 'none',
-                          zIndex: isDragging ? 15 : 6,
+                          zIndex: isDragging ? 15 : isSelected ? 8 : 6,
                           opacity: isDragging ? 0.4 : densityOpacity,
-                          boxShadow: isDone ? 'none' : '0 1px 3px rgba(0,0,0,0.2)',
+                          boxShadow: isSelected
+                            ? `0 0 0 2px ${color}`
+                            : isDone ? 'none' : '0 1px 3px rgba(0,0,0,0.2)',
                           overflow: 'hidden',
                           boxSizing: 'border-box',
                         }}
                         onMouseDown={(e) => handleTaskMouseDown(e, task, 'move', lane.id)}
+                        onDoubleClick={(e) => { e.stopPropagation(); setSelectedTaskId(task.id); }}
                       >
                         {/* Task title */}
                         <span
@@ -1340,6 +1445,23 @@ export function CustomGantt({ tasks, projects, people }: Props) {
         >
           {tooltip.text}
         </div>
+      )}
+
+      {/* Rubber-band selection box */}
+      {selectBoxRect && selectBoxRect.w > 4 && selectBoxRect.h > 4 && (
+        <div
+          style={{
+            position: 'fixed',
+            left: selectBoxRect.x,
+            top: selectBoxRect.y,
+            width: selectBoxRect.w,
+            height: selectBoxRect.h,
+            border: '1px solid var(--accent)',
+            backgroundColor: 'rgba(99,102,241,0.08)',
+            pointerEvents: 'none',
+            zIndex: 150,
+          }}
+        />
       )}
 
       {/* Task detail modal */}
