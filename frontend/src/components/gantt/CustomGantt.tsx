@@ -3,9 +3,12 @@ import {
   useMemo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useState,
   Fragment,
 } from 'react';
+import { BacklogTray } from './BacklogTray';
+import type { TrayLane } from './BacklogTray';
 import { useQueryClient } from '@tanstack/react-query';
 import { TaskDetailModal } from './TaskDetailModal';
 import { addDays, subDays, differenceInCalendarDays, format } from 'date-fns';
@@ -66,7 +69,7 @@ interface CoTaskSnapshot {
 
 interface DragState {
   taskId: number;
-  type: 'move' | 'resize-left' | 'resize-right' | 'connect-dep';
+  type: 'move' | 'resize-left' | 'resize-right' | 'connect-dep' | 'from-backlog';
   startMouseX: number;
   startMouseY: number;
   originalStart: Date;
@@ -254,6 +257,7 @@ export function CustomGantt({ tasks, projects, people, autoArrangeRef }: Props) 
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const labelsRef = useRef<HTMLDivElement>(null);
+  const trayContainerRef = useRef<HTMLDivElement>(null);
   const dragState = useRef<DragState | null>(null);
   const resizeLane = useRef<{ laneId: string; startY: number; startHeight: number } | null>(null);
   const autoPlacedRef = useRef<Set<number>>(new Set());
@@ -294,6 +298,8 @@ export function CustomGantt({ tasks, projects, people, autoArrangeRef }: Props) 
   const [previewLaneY, setPreviewLaneY] = useState<Map<number, number> | null>(null);
   const previewClearTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const [trayDropHighlightLane, setTrayDropHighlightLane] = useState<string | null>(null);
+
   // ── Multi-select state ───────────────────────────────────────────────────
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<number>>(new Set());
   // Ref so event callbacks always read the latest set without stale-closure issues
@@ -321,6 +327,22 @@ export function CustomGantt({ tasks, projects, people, autoArrangeRef }: Props) 
 
   const totalDays = differenceInCalendarDays(viewEnd, viewStart);
   const totalWidth = totalDays * pxPerDay;
+
+  // When filtered tasks change the date range, viewStart shifts. Compensate scrollLeft
+  // before paint so the visible date region stays fixed.
+  const prevViewStartRef = useRef<Date | null>(null);
+  useLayoutEffect(() => {
+    if (!scrollRef.current) return;
+    if (prevViewStartRef.current === null) {
+      prevViewStartRef.current = viewStart;
+      return;
+    }
+    const dayShift = differenceInCalendarDays(prevViewStartRef.current, viewStart);
+    if (dayShift !== 0) {
+      scrollRef.current.scrollLeft = Math.max(0, scrollRef.current.scrollLeft + dayShift * pxPerDay);
+    }
+    prevViewStartRef.current = viewStart;
+  }, [viewStart, pxPerDay]);
 
   // ── Build lanes ──────────────────────────────────────────────────────────
   const lanes = useMemo<Lane[]>(() => {
@@ -363,6 +385,18 @@ export function CustomGantt({ tasks, projects, people, autoArrangeRef }: Props) 
 
     return result;
   }, [tasks, people, personOrder]);
+
+  // ── Backlog tasks: undated non-milestones shown in tray ──────────────────
+  const backlogTasks = useMemo(
+    () => tasks.filter((t) => !t.start_date && !t.end_date && !t.deadline && t.type !== 'milestone'),
+    [tasks],
+  );
+
+  // ── Tray lane descriptors (same structure as lanes, no milestone lane) ───
+  const trayLanes = useMemo<TrayLane[]>(
+    () => lanes.filter((l) => l.id !== 'milestones'),
+    [lanes],
+  );
 
   // ── Auto-layout: compute lane_y for tasks not yet placed ──────────────
   const autoLayoutRef = useRef<Record<number, number>>({});
@@ -605,6 +639,28 @@ export function CustomGantt({ tasks, projects, people, autoArrangeRef }: Props) 
     [viewStart, pxPerDay, createTask, setSelectedTaskId, getNearestSnapRow]
   );
 
+  // ── Backlog drag start (card dragged out of tray) ───────────────────────
+  const handleBacklogDragStart = useCallback(
+    (taskId: number, e: React.MouseEvent) => {
+      e.preventDefault();
+      const task = tasks.find((t) => t.id === taskId);
+      if (!task) return;
+      const today = new Date();
+      dragState.current = {
+        taskId,
+        type: 'from-backlog',
+        startMouseX: e.clientX,
+        startMouseY: e.clientY,
+        originalStart: today,
+        originalEnd: addDays(today, 1),
+        originalLaneY: -1,
+        originalAssigneeId: task.assignee_id,
+        originalLaneKey: 'backlog',
+      };
+    },
+    [tasks],
+  );
+
   // ── Mouse event handlers ─────────────────────────────────────────────────
   const handleTaskMouseDown = useCallback(
     (
@@ -728,6 +784,28 @@ export function CustomGantt({ tasks, projects, people, autoArrangeRef }: Props) 
         return;
       }
 
+      if (ds.type === 'from-backlog') {
+        // Show ghost bar in the timeline when cursor is over the Gantt scroll area
+        const scrollRect = scrollRef.current.getBoundingClientRect();
+        const isOverGantt = e.clientX >= scrollRect.left && e.clientX <= scrollRect.right
+          && e.clientY >= scrollRect.top && e.clientY <= scrollRect.bottom;
+        if (isOverGantt) {
+          const mouseXInScroll = e.clientX - scrollRect.left + scrollRef.current.scrollLeft;
+          const dropDate = xToDate(mouseXInScroll, viewStart, pxPerDay);
+          const x = dateToX(dropDate, viewStart, pxPerDay) - scrollRef.current.scrollLeft + scrollRect.left;
+          const color = projectColor(tasks.find((t) => t.id === ds.taskId)?.project_id ?? null, projects);
+          const mouseYInScroll = e.clientY - scrollRect.top + scrollRef.current.scrollTop;
+          const snap = getNearestSnapRow(mouseYInScroll);
+          const snappedY = snap
+            ? scrollRect.top - scrollRef.current.scrollTop + (laneTopMap[snap.lane.id] ?? 0) + snap.row * TASK_ROW_HEIGHT + 4
+            : e.clientY - TASK_HEIGHT / 2;
+          setDragOverlays([{ taskId: ds.taskId, x, y: snappedY, width: Math.max(pxPerDay * 3, 24), color }]);
+        } else {
+          setDragOverlays([]);
+        }
+        return;
+      }
+
       if (ds.type === 'move') {
         const deltaDays = Math.round(dx / pxPerDay);
         const newStart = addDays(ds.originalStart, deltaDays);
@@ -762,6 +840,22 @@ export function CustomGantt({ tasks, projects, people, autoArrangeRef }: Props) 
           }
         }
         setDragOverlays(overlays);
+
+        // Detect if cursor is over the backlog tray → highlight target lane
+        const trayRect = trayContainerRef.current?.getBoundingClientRect();
+        if (trayRect && e.clientX >= trayRect.left && e.clientX <= trayRect.right) {
+          const scrollTop = scrollRef.current.scrollTop;
+          const relY = e.clientY - trayRect.top + scrollTop;
+          let hlLane: string | null = null;
+          for (const lane of lanes) {
+            const top = (laneTopMap[lane.id] ?? 0) - DATE_HEADER_HEIGHT;
+            const h = laneHeightMap[lane.id] ?? DEFAULT_LANE_HEIGHT;
+            if (relY >= top && relY < top + h) { hlLane = lane.id; break; }
+          }
+          setTrayDropHighlightLane(hlLane);
+        } else {
+          setTrayDropHighlightLane(null);
+        }
         return;
       }
 
@@ -801,7 +895,7 @@ export function CustomGantt({ tasks, projects, people, autoArrangeRef }: Props) 
         return;
       }
     },
-    [pxPerDay, viewStart, taskRectMap, tasks, projects, setLaneHeight, laneTopMap, laneHeightMap, getNearestSnapRow]
+    [pxPerDay, viewStart, taskRectMap, tasks, projects, setLaneHeight, laneTopMap, laneHeightMap, getNearestSnapRow, lanes]
   );
 
   const handleMouseUp = useCallback(
@@ -869,6 +963,45 @@ export function CustomGantt({ tasks, projects, people, autoArrangeRef }: Props) 
 
       setDragOverlays([]);
       setConnectLine(null);
+      setTrayDropHighlightLane(null);
+
+      // ── Drop from-backlog onto timeline ──────────────────────────────────
+      if (ds.type === 'from-backlog') {
+        dragState.current = null;
+        if (!scrollRef.current) return;
+        const scrollRect = scrollRef.current.getBoundingClientRect();
+        const isOverGantt = e.clientX >= scrollRect.left && e.clientX <= scrollRect.right
+          && e.clientY >= scrollRect.top && e.clientY <= scrollRect.bottom;
+        if (!isOverGantt) return;
+
+        const mouseXInScroll = e.clientX - scrollRect.left + scrollRef.current.scrollLeft;
+        const mouseYInScroll = e.clientY - scrollRect.top + scrollRef.current.scrollTop;
+        const dropDate = xToDate(mouseXInScroll, viewStart, pxPerDay);
+        const newStart = format(dropDate, 'yyyy-MM-dd');
+        const newEnd = format(addDays(dropDate, 3), 'yyyy-MM-dd');
+        const snap = getNearestSnapRow(mouseYInScroll);
+        const dropLane = snap?.lane ?? null;
+        const newLaneY = snap?.row ?? 0;
+
+        moveTask.mutate({ id: ds.taskId, start_date: newStart, end_date: newEnd });
+        const upd: Partial<Task> = { lane_y: newLaneY };
+        if (dropLane && dropLane.personId !== undefined) upd.assignee_id = dropLane.personId ?? null;
+        updateTask.mutate({ id: ds.taskId, data: upd });
+        return;
+      }
+
+      // ── Drop move onto backlog tray (clear dates) ─────────────────────────
+      if (ds.type === 'move') {
+        const trayRect = trayContainerRef.current?.getBoundingClientRect();
+        const isOverTray = trayRect
+          && e.clientX >= trayRect.left && e.clientX <= trayRect.right
+          && e.clientY >= trayRect.top && e.clientY <= trayRect.bottom;
+        if (isOverTray) {
+          dragState.current = null;
+          updateTask.mutate({ id: ds.taskId, data: { start_date: null, end_date: null, deadline: null, lane_y: -1 } });
+          return;
+        }
+      }
 
       if (ds.type === 'connect-dep') {
         // Find task under cursor
@@ -1054,7 +1187,7 @@ export function CustomGantt({ tasks, projects, people, autoArrangeRef }: Props) 
 
       dragState.current = null;
     },
-    [pxPerDay, addDependency, moveTask, updateTask, getNearestSnapRow, tasks, taskRectMap, dragOverLaneId, lanes, setPersonOrder, qc, laneTopMap]
+    [pxPerDay, addDependency, moveTask, updateTask, getNearestSnapRow, tasks, taskRectMap, dragOverLaneId, lanes, setPersonOrder, qc, laneTopMap, viewStart]
   );
 
   // Register global mouse events
@@ -1199,6 +1332,20 @@ export function CustomGantt({ tasks, projects, people, autoArrangeRef }: Props) 
 
       {/* Main area */}
       <div className="flex flex-1 overflow-hidden">
+        {/* Backlog staging tray */}
+        <BacklogTray
+          allTasks={tasks}
+          backlogTasks={backlogTasks}
+          projects={projects}
+          lanes={trayLanes}
+          laneHeightMap={laneHeightMap}
+          laneTopMap={laneTopMap}
+          onBacklogDragStart={handleBacklogDragStart}
+          ganttScrollRef={scrollRef}
+          dropHighlightLaneId={trayDropHighlightLane}
+          containerRef={trayContainerRef}
+        />
+
         {/* Lane labels (left sidebar, Y-sync'd via ref) */}
         <div
           ref={labelsRef}

@@ -6,6 +6,10 @@ interface UIState {
   toggleDarkMode: () => void;
   selectedTaskId: number | null;
   setSelectedTaskId: (id: number | null) => void;
+  trayOpen: boolean;
+  toggleTray: () => void;
+  trayWidth: number;
+  setTrayWidth: (w: number) => void;
   visibleProjectIds: Set<number> | null; // null = show all
   toggleProjectVisibility: (id: number) => void;
   showAllProjects: () => void;
@@ -20,6 +24,10 @@ interface UIState {
   toggleSidebar: () => void;
   hideDoneTasks: boolean;
   toggleHideDoneTasks: () => void;
+  createdByFilter: 'all' | 'human' | 'agent';
+  setCreatedByFilter: (v: 'all' | 'human' | 'agent') => void;
+  lastEditedByFilter: 'all' | 'human' | 'agent';
+  setLastEditedByFilter: (v: 'all' | 'human' | 'agent') => void;
   pxPerDay: number;
   setPxPerDay: (v: number) => void;
   laneHeights: Record<string, number>;
@@ -41,6 +49,11 @@ export const useUIStore = create<UIState>()(
 
       selectedTaskId: null,
       setSelectedTaskId: (id) => set({ selectedTaskId: id }),
+
+      trayOpen: true,
+      toggleTray: () => set((s) => ({ trayOpen: !s.trayOpen })),
+      trayWidth: 250,
+      setTrayWidth: (w) => set({ trayWidth: Math.max(120, Math.min(500, w)) }),
 
       visibleProjectIds: null,
       toggleProjectVisibility: (id) =>
@@ -81,6 +94,11 @@ export const useUIStore = create<UIState>()(
       hideDoneTasks: true,
       toggleHideDoneTasks: () => set((s) => ({ hideDoneTasks: !s.hideDoneTasks })),
 
+      createdByFilter: 'all',
+      setCreatedByFilter: (v) => set({ createdByFilter: v }),
+      lastEditedByFilter: 'all',
+      setLastEditedByFilter: (v) => set({ lastEditedByFilter: v }),
+
       pxPerDay: 14,
       setPxPerDay: (v) => set({ pxPerDay: Math.max(1, Math.min(80, v)) }),
 
@@ -103,9 +121,13 @@ export const useUIStore = create<UIState>()(
         projectOrder: s.projectOrder,
         sidebarOpen: s.sidebarOpen,
         hideDoneTasks: s.hideDoneTasks,
+        createdByFilter: s.createdByFilter,
+        lastEditedByFilter: s.lastEditedByFilter,
         pxPerDay: s.pxPerDay,
         laneHeights: s.laneHeights,
         detailPanelWidth: s.detailPanelWidth,
+        trayOpen: s.trayOpen,
+        trayWidth: s.trayWidth,
       }),
       merge: (persisted: unknown, current: UIState): UIState => {
         const p = persisted as Partial<{
@@ -116,9 +138,13 @@ export const useUIStore = create<UIState>()(
           projectOrder: number[];
           sidebarOpen: boolean;
           hideDoneTasks: boolean;
+          createdByFilter: 'all' | 'human' | 'agent';
+          lastEditedByFilter: 'all' | 'human' | 'agent';
           pxPerDay: number;
           laneHeights: Record<string, number>;
           detailPanelWidth: number;
+          trayOpen: boolean;
+          trayWidth: number;
         }>;
         return {
           ...current,
@@ -129,9 +155,13 @@ export const useUIStore = create<UIState>()(
           projectOrder: p.projectOrder ?? [],
           ...(p.sidebarOpen !== undefined && { sidebarOpen: p.sidebarOpen }),
           ...(p.hideDoneTasks !== undefined && { hideDoneTasks: p.hideDoneTasks }),
+          ...(p.createdByFilter !== undefined && { createdByFilter: p.createdByFilter }),
+          ...(p.lastEditedByFilter !== undefined && { lastEditedByFilter: p.lastEditedByFilter }),
           ...(p.pxPerDay !== undefined && { pxPerDay: p.pxPerDay }),
           laneHeights: p.laneHeights ?? {},
           detailPanelWidth: p.detailPanelWidth ?? 360,
+          ...(p.trayOpen !== undefined && { trayOpen: p.trayOpen }),
+          trayWidth: p.trayWidth ?? 250,
         };
       },
     }
