@@ -7,7 +7,7 @@ import {
   useState,
   Fragment,
 } from 'react';
-import { BacklogTray } from './BacklogTray';
+import { BacklogTray, CARD_WIDTH as TRAY_CARD_WIDTH } from './BacklogTray';
 import type { TrayLane } from './BacklogTray';
 import { useQueryClient } from '@tanstack/react-query';
 import { TaskDetailModal } from './TaskDetailModal';
@@ -643,6 +643,7 @@ export function CustomGantt({ tasks, projects, people, autoArrangeRef }: Props) 
   const handleBacklogDragStart = useCallback(
     (taskId: number, e: React.MouseEvent) => {
       e.preventDefault();
+      setTooltip(null);
       const task = tasks.find((t) => t.id === taskId);
       if (!task) return;
       const today = new Date();
@@ -785,15 +786,16 @@ export function CustomGantt({ tasks, projects, people, autoArrangeRef }: Props) 
       }
 
       if (ds.type === 'from-backlog') {
-        // Show ghost bar in the timeline when cursor is over the Gantt scroll area
+        const color = projectColor(tasks.find((t) => t.id === ds.taskId)?.project_id ?? null, projects);
         const scrollRect = scrollRef.current.getBoundingClientRect();
         const isOverGantt = e.clientX >= scrollRect.left && e.clientX <= scrollRect.right
           && e.clientY >= scrollRect.top && e.clientY <= scrollRect.bottom;
+
         if (isOverGantt) {
+          // Date-snapped full bar in the timeline
           const mouseXInScroll = e.clientX - scrollRect.left + scrollRef.current.scrollLeft;
           const dropDate = xToDate(mouseXInScroll, viewStart, pxPerDay);
           const x = dateToX(dropDate, viewStart, pxPerDay) - scrollRef.current.scrollLeft + scrollRect.left;
-          const color = projectColor(tasks.find((t) => t.id === ds.taskId)?.project_id ?? null, projects);
           const mouseYInScroll = e.clientY - scrollRect.top + scrollRef.current.scrollTop;
           const snap = getNearestSnapRow(mouseYInScroll);
           const snappedY = snap
@@ -801,7 +803,8 @@ export function CustomGantt({ tasks, projects, people, autoArrangeRef }: Props) 
             : e.clientY - TASK_HEIGHT / 2;
           setDragOverlays([{ taskId: ds.taskId, x, y: snappedY, width: Math.max(pxPerDay * 3, 24), color }]);
         } else {
-          setDragOverlays([]);
+          // Card-sized ghost following cursor (in tray or anywhere else)
+          setDragOverlays([{ taskId: ds.taskId, x: e.clientX - TRAY_CARD_WIDTH / 2, y: e.clientY - TASK_HEIGHT / 2, width: TRAY_CARD_WIDTH, color }]);
         }
         return;
       }
@@ -1344,6 +1347,7 @@ export function CustomGantt({ tasks, projects, people, autoArrangeRef }: Props) 
           ganttScrollRef={scrollRef}
           dropHighlightLaneId={trayDropHighlightLane}
           containerRef={trayContainerRef}
+          onTooltip={setTooltip}
         />
 
         {/* Lane labels (left sidebar, Y-sync'd via ref) */}

@@ -3,7 +3,7 @@ import type { Task, Project } from '../../lib/api';
 import { useUIStore } from '../../store/uiStore';
 
 // ── Constants (mirrors CustomGantt) ─────────────────────────────────────────
-const CARD_WIDTH = 52;
+export const CARD_WIDTH = 52;
 const CARD_COL_WIDTH = 60;    // card + gap
 const TASK_HEIGHT = 28;
 const TASK_ROW_HEIGHT = 36;
@@ -34,6 +34,8 @@ export interface BacklogTrayProps {
   dropHighlightLaneId?: string | null;
   /** Outer container ref so parent can check if cursor is over the tray */
   containerRef?: RefObject<HTMLDivElement | null>;
+  /** Mirror the Gantt tooltip — called on card hover */
+  onTooltip?: (tip: { text: string; x: number; y: number } | null) => void;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -78,7 +80,8 @@ function computeTopoPositions(
     if (!changed) break;
   }
 
-  // Group by depth, sort within column by priority desc then id for determinism
+  // Group by depth, sort within column using same zone logic as autoArrange:
+  // low score (low priority + low density) → top rows, high score → bottom rows.
   const byDepth = new Map<number, Task[]>();
   for (const task of tasks) {
     const d = depth.get(task.id) ?? 0;
@@ -86,10 +89,13 @@ function computeTopoPositions(
     byDepth.get(d)!.push(task);
   }
 
+  const zoneScore = (t: Task) =>
+    2 * ((t.priority ?? 2) / 5) + 2 * ((t.density ?? 50) / 100);
+
   const positions = new Map<number, { col: number; row: number }>();
   for (const [col, colTasks] of Array.from(byDepth.entries())) {
     colTasks
-      .sort((a, b) => (b.priority ?? 2) - (a.priority ?? 2) || a.id - b.id)
+      .sort((a, b) => zoneScore(a) - zoneScore(b) || a.id - b.id)
       .forEach((task, row) => {
         positions.set(task.id, { col, row });
       });
@@ -146,6 +152,7 @@ export function BacklogTray({
   ganttScrollRef,
   dropHighlightLaneId = null,
   containerRef,
+  onTooltip,
 }: BacklogTrayProps) {
   const { trayOpen, toggleTray, trayWidth, setTrayWidth } = useUIStore();
   const trayScrollRef = useRef<HTMLDivElement>(null);
@@ -450,7 +457,9 @@ export function BacklogTray({
                   return (
                     <div
                       key={task.id}
-                      title={task.title}
+                      onMouseEnter={(e) => onTooltip?.({ text: task.title, x: e.clientX, y: e.clientY - 32 })}
+                      onMouseMove={(e) => onTooltip?.({ text: task.title, x: e.clientX, y: e.clientY - 32 })}
+                      onMouseLeave={() => onTooltip?.(null)}
                       style={{
                         position: 'absolute',
                         left: pos.col * CARD_COL_WIDTH + 4,
