@@ -2,29 +2,54 @@ import { addDays, subDays } from 'date-fns';
 import type { Task } from './api';
 
 // ── Tunable weights ──────────────────────────────────────────────────────────
+//
+// Zone structure comes from Phase 1 seed ORDER, not from per-row gravity scores.
+// Gravity scores (penalty/bonus per row index) were removed because they drove
+// tasks to extreme rows and left empty gaps in the middle. Instead, low-density /
+// low-priority tasks seed first and claim top rows in Phase 2's greedy placement.
+// High-priority tasks seed last and land below them. Phase 3 only refines
+// dependency routing and project grouping — it never introduces gravity-induced gaps.
+//
 const W = {
+  // ── Zone separation (Phase 1 seed order) ───────────────────────────────────
+
+  // Controls how strongly *priority* pushes a task toward the bottom zone.
+  // Seed score = ZONE_WEIGHT_PRIORITY × priority_norm + ZONE_WEIGHT_DENSITY × density_norm
+  //            + normalised_start_date.
+  // Low seed score → seeds first → top rows.  High seed score → seeds last → bottom rows.
+  // Set to 0 to remove priority from zone placement (zone driven by density only).
+  ZONE_WEIGHT_PRIORITY: 2,
+
+  // Controls how strongly *density* pushes a task toward the bottom zone.
+  // Kept higher than ZONE_WEIGHT_PRIORITY so high-density tasks (active, intensive work)
+  // sink more reliably to the bottom even when their priority rating is moderate.
+  // Set to 0 to remove density from zone placement (zone driven by priority only).
+  ZONE_WEIGHT_DENSITY: 2,
+
+  // Within tasks of similar zone score, longer tasks seed first so shorter tasks can
+  // fill gaps around them ("big rocks first"). Applies as: log(1 + duration_days) × this.
+  // Set to 0 to ignore duration in seed ordering.
+  // Keep low (< 0.3) — large values let bulky low-priority tasks jump ahead of urgent ones.
+  DURATION_SORT_WEIGHT: 0.5,
+
+  // ── Phase 3 refinement scoring ─────────────────────────────────────────────
+
   // Pulls a task toward the row of its *parent* (the task it depends on).
-  // Increase → dependency arrows become shorter/more horizontal; blockers and their
-  // dependents cluster tightly. Very high values can override priority gravity.
+  // Increase → dependency arrows become shorter / more horizontal; blockers and
+  // dependents cluster on adjacent rows. Very high values can break zone structure.
   RUBBER_BAND_PARENT: 25,
 
-  // Same pull, but toward *child* tasks (tasks that depend on this one).
+  // Same pull toward *child* tasks (tasks that depend on this one).
   // Kept lower than PARENT so parents anchor first, children route around them.
   RUBBER_BAND_CHILD: 15,
 
   // Bonus for landing on a row that already contains another task from the same project.
-  // Increase → stronger same-row color grouping. Decrease → projects spread across rows.
+  // Increase → stronger same-row colour grouping. Decrease → projects spread across rows.
   PROJECT_AFFINITY_SAME_ROW: 9,
 
   // Bonus for landing one row above or below another same-project task.
-  // Works with SAME_ROW to create 2-3 row color bands. Increase to widen bands.
+  // Works with SAME_ROW to create 2-3 row colour bands. Increase to widen bands.
   PROJECT_AFFINITY_ADJACENT: 6,
-
-  // Penalty = row_index × normalised_priority (0–1). High-priority tasks float to row 0;
-  // low-priority tasks are indifferent to where they sit.
-  // Increase → top rows are more exclusively reserved for urgent work.
-  // Decrease → tasks distribute more evenly regardless of priority.
-  URGENCY_GRAVITY: 4,
 
   // Bonus when a task's start date falls within TETRIS_GAP_DAYS of where another task
   // ends in the same row — rewards snug temporal fits.
@@ -37,21 +62,7 @@ const W = {
   // Increase → tasks pack even across moderate gaps.
   TETRIS_GAP_DAYS: 7,
 
-  // Bonus = row_index × (1 − density). A low-density task (background work, slow-burn
-  // research) gets a larger bonus for sitting in *lower* rows, keeping top rows free for
-  // high-density, high-priority tasks.
-  // Increase → stronger separation between active and background work.
-  // Set to 0 to ignore density when choosing rows.
-  DENSITY_GRAVITY: 4,
-
-  // Controls how much density-adjusted duration influences the Phase 1 seeding order.
-  // Formula: combined_score = priority_norm + log(1+duration_days) × density_norm × this.
-  // At 0: duration is ignored; tasks seed purely by start_date then priority.
-  // Increase (e.g. 0.3): longer, high-density tasks seed first so short tasks fill gaps.
-  // Keep low (< 0.3) to prevent long low-density tasks from crowding out high-priority ones.
-  DURATION_SORT_WEIGHT: 0.15,
-
-  // Number of refinement passes in Phase 3. More passes → better dependency/affinity
+  // Number of refinement passes in Phase 3. More passes → better dependency / affinity
   // grouping but slower. 3–4 is the sweet spot; returns diminish sharply beyond 5.
   MAX_ITERATIONS: 4,
 };
@@ -104,14 +115,6 @@ function rowFitScore(
   childIds: number[],
 ): number {
   let score = 0;
-  const priorityNorm = Math.max(0, Math.min(1, (task.priority ?? 3) / 5));
-  const densityNorm  = Math.max(0, Math.min(1, (task.density  ?? 50) / 100));
-
-  // High-priority tasks prefer top rows; low-priority are indifferent
-  score -= row * priorityNorm * W.URGENCY_GRAVITY;
-
-  // Low-density tasks prefer lower rows, freeing top rows for active work
-  score += row * (1 - densityNorm) * W.DENSITY_GRAVITY;
 
   // Rubber band: dependencies pull toward parent/child rows
   for (const pid of parentIds) {
@@ -209,29 +212,40 @@ export function computeAutoArrange(
   const placeable = laneTasks.filter(t => getDisplayDates(t) !== null);
   if (placeable.length === 0) return result;
 
-  // Phase 1: Global Sort — chronological first, then density-adjusted combined score desc,
-  // then id as a deterministic tie-breaker.
-  // Duration is weighted by density so long low-density tasks don't crowd out urgent work.
+  // Phase 1: Seed-order sort.
+  //
+  // seed_score = ZONE_WEIGHT × (priority_norm + density_norm) + normalised_start_date
+  //
+  // Low score → seeds first → Phase 2 places them in top rows.
+  // High score → seeds last → placed in rows below the earlier tasks.
+  //
+  // This is the sole mechanism that creates the "top = background / bottom = urgent" zones.
+  // No per-row gravity is used anywhere in Phase 3 — gravity causes gaps.
+  const starts = placeable.map(t => getDisplayDates(t)!.start.getTime());
+  const minStart = Math.min(...starts);
+  const startRange = Math.max(...starts) - minStart || 1;
+
+  const seedScore = (task: Task, dates: DateRange): number => {
+    const priorityNorm = (task.priority ?? 3) / 5;
+    const densityNorm  = (task.density  ?? 50) / 100;
+    const startNorm    = (dates.start.getTime() - minStart) / startRange;
+    const durationDays = (dates.end.getTime() - dates.start.getTime()) / 86400000;
+    // Duration is a negative term: longer tasks get a lower seed score and seed earlier,
+    // so shorter tasks can fill gaps around them. Kept small so it doesn't override zone order.
+    const durationBonus = Math.log(1 + durationDays) * W.DURATION_SORT_WEIGHT;
+    return W.ZONE_WEIGHT_PRIORITY * priorityNorm + W.ZONE_WEIGHT_DENSITY * densityNorm + startNorm - durationBonus;
+  };
+
   const sorted = Array.from(placeable).sort((a, b) => {
     const aD = getDisplayDates(a)!;
     const bD = getDisplayDates(b)!;
-    const startDiff = aD.start.getTime() - bD.start.getTime();
-    if (startDiff !== 0) return startDiff;
-
-    const aPri  = (a.priority ?? 3) / 5;
-    const bPri  = (b.priority ?? 3) / 5;
-    const aDens = (a.density  ?? 50) / 100;
-    const bDens = (b.density  ?? 50) / 100;
-    const aDurDays = (aD.end.getTime() - aD.start.getTime()) / 86400000;
-    const bDurDays = (bD.end.getTime() - bD.start.getTime()) / 86400000;
-    const aScore = aPri + Math.log(1 + aDurDays) * aDens * W.DURATION_SORT_WEIGHT;
-    const bScore = bPri + Math.log(1 + bDurDays) * bDens * W.DURATION_SORT_WEIGHT;
-    const scoreDiff = bScore - aScore;
-    if (Math.abs(scoreDiff) > 0.001) return scoreDiff;
-    return a.id - b.id;
+    const diff = seedScore(a, aD) - seedScore(b, bD);
+    if (Math.abs(diff) > 0.001) return diff;
+    return a.id - b.id; // deterministic tie-breaker
   });
 
-  // Phase 2: Initial Draft Placement — first legal row, no scoring
+  // Phase 2: Initial Draft Placement — first legal row, no scoring.
+  // Tasks arrive in zone order so greedy placement naturally stacks zones vertically.
   const board: Board = new Map();
   const taskRowMap = new Map<number, number>();
 
@@ -244,7 +258,10 @@ export function computeAutoArrange(
     taskRowMap.set(task.id, row);
   }
 
-  // Phase 3: Iterative Refinement — relax with dependency/affinity/density scoring
+  // Phase 3: Iterative Refinement — dependency routing and project affinity only.
+  // No gravity here: absolute row preferences create gaps. The zone structure from
+  // Phase 1 is preserved because Phase 3's only incentives (rubber-band, affinity,
+  // tetris) produce small, local moves rather than large jumps to extreme rows.
   for (let iter = 0; iter < W.MAX_ITERATIONS; iter++) {
     let movesMade = 0;
     for (const task of sorted) {
@@ -263,25 +280,9 @@ export function computeAutoArrange(
     if (movesMade === 0) break;
   }
 
-  // Phase 4: Final Compaction — upward gravity, no scoring.
-  // Low-density tasks are skipped: their position was deliberately chosen by Phase 3's
-  // DENSITY_GRAVITY and compacting them upward would undo that.
-  const COMPACT_DENSITY_THRESHOLD = 30;
-  const compactOrder = [...sorted].sort((a, b) =>
-    getDisplayDates(a)!.start.getTime() - getDisplayDates(b)!.start.getTime()
-  );
-  for (const task of compactOrder) {
-    if ((task.density ?? 50) < COMPACT_DENSITY_THRESHOLD) continue;
-    const dates = getDisplayDates(task)!;
-    const currentRow = taskRowMap.get(task.id)!;
-    removeTask(board, task.id);
-    let bestUp = currentRow;
-    for (let r = 0; r < currentRow; r++) {
-      if (isRowValid(board, r, dates, task.id)) { bestUp = r; break; }
-    }
-    placeTask(board, task, bestUp, dates);
-    taskRowMap.set(task.id, bestUp);
-  }
+  // Phase 4 (upward gravity) is intentionally omitted.
+  // It would drag high-priority tasks back up from the bottom zone into the gaps
+  // left by low-density tasks, destroying the zone structure.
 
   for (const task of sorted) {
     result.set(task.id, taskRowMap.get(task.id) ?? 0);

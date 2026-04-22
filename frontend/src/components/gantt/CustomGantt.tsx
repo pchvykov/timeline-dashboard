@@ -676,6 +676,14 @@ export function CustomGantt({ tasks, projects, people, autoArrangeRef }: Props) 
 
   const handleMouseMove = useCallback(
     (e: MouseEvent) => {
+      // Lane resize (checked before selection box to avoid conflict)
+      if (resizeLane.current) {
+        const dy = e.clientY - resizeLane.current.startY;
+        const newH = Math.max(MIN_LANE_HEIGHT, resizeLane.current.startHeight + dy);
+        setLaneHeight(resizeLane.current.laneId, newH);
+        return;
+      }
+
       // Rubber-band selection box
       if (selectBoxStart.current && !dragState.current) {
         const { screenX, screenY } = selectBoxStart.current;
@@ -685,14 +693,6 @@ export function CustomGantt({ tasks, projects, people, autoArrangeRef }: Props) 
           w: Math.abs(e.clientX - screenX),
           h: Math.abs(e.clientY - screenY),
         });
-        return;
-      }
-
-      // Lane resize
-      if (resizeLane.current) {
-        const dy = e.clientY - resizeLane.current.startY;
-        const newH = Math.max(MIN_LANE_HEIGHT, resizeLane.current.startHeight + dy);
-        setLaneHeight(resizeLane.current.laneId, newH);
         return;
       }
 
@@ -1570,6 +1570,7 @@ export function CustomGantt({ tasks, projects, people, autoArrangeRef }: Props) 
                     }}
                     onMouseDown={(e) => {
                       e.preventDefault();
+                      e.stopPropagation();
                       resizeLane.current = {
                         laneId: lane.id,
                         startY: e.clientY,
