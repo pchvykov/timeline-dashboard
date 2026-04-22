@@ -67,6 +67,7 @@ class Task(Base):
     tags = Column(Text, default="[]")
     notes = Column(Text)
     deadline = Column(Text)
+    hard_deadline = Column(Integer, nullable=False, default=0)
     lane_y = Column(Integer, nullable=False, default=-1)
     created_at = Column(Text, nullable=False, default=lambda: datetime.utcnow().isoformat())
     updated_at = Column(Text, nullable=False, default=lambda: datetime.utcnow().isoformat())

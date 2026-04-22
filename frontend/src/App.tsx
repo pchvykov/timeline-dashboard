@@ -1,4 +1,4 @@
-import { useMemo, useEffect } from 'react';
+import { useMemo, useEffect, useRef } from 'react';
 import { useTasks, useProjects, usePeople } from './hooks/useTasks';
 import { useUIStore } from './store/uiStore';
 import { useUndoStore } from './store/undoStore';
@@ -12,6 +12,7 @@ function App() {
   const { data: people } = usePeople();
   const { sidebarOpen, visibleProjectIds, visiblePersonIds, darkMode } = useUIStore();
   const { undo, redo } = useUndoStore();
+  const autoArrangeRef = useRef<(() => Promise<void>) | null>(null);
 
   // Apply dark mode class on mount
   useEffect(() => {
@@ -57,13 +58,14 @@ function App() {
 
   return (
     <>
-      <TopBar />
+      <TopBar onAutoArrange={() => autoArrangeRef.current?.()} />
       <div className="flex flex-1 overflow-hidden">
         {sidebarOpen && <Sidebar />}
         <CustomGantt
           tasks={filteredTasks}
           projects={projects ?? []}
           people={people ?? []}
+          autoArrangeRef={autoArrangeRef}
         />
       </div>
     </>

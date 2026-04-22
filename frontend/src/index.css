@@ -7,19 +7,21 @@
   --text-primary: #111827;
   --text-muted: #6b7280;
   --border: #e5e7eb;
-  --accent: #6366f1;
-  --today-line: #ef4444;
+  --accent: #0066BC;
+  --today-line: #FF5A6F;
+  --urgent: #FF5A6F;
 }
 
 .dark {
-  --bg-base: #0f1117;
-  --bg-surface: #1a1d27;
-  --bg-elevated: #252836;
-  --text-primary: #f9fafb;
-  --text-muted: #9ca3af;
-  --border: #2d3148;
-  --accent: #818cf8;
-  --today-line: #f87171;
+  --bg-base: #1F232A;
+  --bg-surface: #252B34;
+  --bg-elevated: #2D3441;
+  --text-primary: #E8EAED;
+  --text-muted: #8B929F;
+  --border: #354050;
+  --accent: #5CAAED;
+  --today-line: #FF5A6F;
+  --urgent: #FF5A6F;
 }
 
 body {
@@ -27,6 +29,8 @@ body {
   background-color: var(--bg-base);
   color: var(--text-primary);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 #root {
@@ -35,3 +39,74 @@ body {
   flex-direction: column;
   overflow: hidden;
 }
+
+/* ── Scrollbars ──────────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 999px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+/* ── Ghost button ────────────────────────────────────────────────────────── */
+.btn-ghost {
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--text-muted);
+  padding: 4px 10px;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  transition: background-color 0.12s, color 0.12s;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: inherit;
+}
+.btn-ghost:hover:not(:disabled) {
+  background-color: rgba(128, 128, 128, 0.1);
+  color: var(--text-primary);
+}
+.btn-ghost.active {
+  background-color: var(--accent);
+  color: #fff;
+}
+.btn-ghost:disabled { opacity: 0.3; cursor: default; }
+
+/* ── Icon button ─────────────────────────────────────────────────────────── */
+.btn-icon {
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 1rem;
+  transition: background-color 0.12s, color 0.12s;
+  flex-shrink: 0;
+  padding: 0;
+  font-family: inherit;
+}
+.btn-icon:hover { background-color: rgba(128, 128, 128, 0.1); color: var(--text-primary); }
+.btn-icon:disabled { opacity: 0.3; cursor: default; }
+
+/* ── Form field ──────────────────────────────────────────────────────────── */
+.field {
+  width: 100%;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  border: 1px solid transparent;
+  border-radius: 6px;
+  outline: none;
+  font-size: 0.825rem;
+  padding: 5px 8px;
+  font-family: inherit;
+  transition: border-color 0.12s, background-color 0.12s;
+  box-sizing: border-box;
+}
+.field:hover { border-color: var(--border); }
+.field:focus { border-color: var(--accent); }
+select.field { cursor: pointer; }

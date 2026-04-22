@@ -19,7 +19,7 @@ const STATUS_LABELS: Record<string, string> = {
 const STATUS_COLORS: Record<string, string> = {
   todo: '#9ca3af',
   in_progress: '#3b82f6',
-  blocked: '#ef4444',
+  blocked: 'var(--urgent)',
   done: '#22c55e',
 };
 
@@ -104,6 +104,7 @@ export function TaskDetailPanel({ task, projects, people }: Props) {
 
   const [title, setTitle] = useState(task.title);
   const [description, setDescription] = useState(task.description ?? '');
+  const [hardDeadline, setHardDeadline] = useState(!!task.hard_deadline);
   const [freeform, setFreeform] = useState(initFree);
   const [checklist, setChecklist] = useState<ChecklistItem[]>(initList);
   const [newItemText, setNewItemText] = useState('');
@@ -113,11 +114,12 @@ export function TaskDetailPanel({ task, projects, people }: Props) {
   useEffect(() => {
     setTitle(task.title);
     setDescription(task.description ?? '');
+    setHardDeadline(!!task.hard_deadline);
     const { freeform: f, checklist: c } = parseNotes(task.notes);
     setFreeform(f);
     setChecklist(c);
     setShowChecklist(c.length > 0);
-  }, [task.id, task.notes, task.description]);
+  }, [task.id, task.notes, task.description, task.hard_deadline]);
 
   // One-time migration: move markdown checklist items from description → UI checklist
   useEffect(() => {
@@ -187,38 +189,40 @@ export function TaskDetailPanel({ task, projects, people }: Props) {
 
   return (
     <div
-      className="w-full flex-shrink-0 border-l overflow-y-auto p-4 flex flex-col gap-4"
+      className="w-full flex-shrink-0 border-l overflow-y-auto p-4 flex flex-col gap-3"
       style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-elevated)' }}
     >
       {/* Header */}
-      <div className="flex items-start justify-between gap-2">
+      <div className="flex items-start justify-between gap-2 mb-1">
         <input
-          className="text-lg font-semibold flex-1 bg-transparent outline-none border-b border-transparent focus:border-current rounded-none"
-          style={{ color: 'var(--text-primary)' }}
+          className="text-base font-semibold flex-1 bg-transparent outline-none"
+          style={{
+            color: 'var(--text-primary)',
+            borderBottom: '1px solid transparent',
+            paddingBottom: 2,
+            transition: 'border-color 0.12s',
+          }}
+          onFocus={(e) => { (e.target as HTMLElement).style.borderBottomColor = 'var(--accent)'; }}
+          onBlur={(e) => {
+            (e.target as HTMLElement).style.borderBottomColor = 'transparent';
+            if (title.trim()) handleUpdate({ title: title.trim() }); else setTitle(task.title);
+          }}
           value={title}
           onChange={(e) => setTitle(e.target.value)}
-          onBlur={() => { if (title.trim()) handleUpdate({ title: title.trim() }); else setTitle(task.title); }}
           onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
         />
-        <button
-          onClick={() => setSelectedTaskId(null)}
-          className="mt-1 text-xl leading-none flex-shrink-0"
-          style={{ color: 'var(--text-muted)' }}
-        >
+        <button onClick={() => setSelectedTaskId(null)} className="btn-icon mt-0.5 flex-shrink-0">
           &times;
         </button>
       </div>
 
       {/* Project */}
       <div>
-        <label className="text-xs uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
-          Project
-        </label>
+        <label className="text-xs font-medium tracking-wide uppercase" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>Project</label>
         <div className="flex items-center gap-2 mt-1">
-          {project && <span className="w-3 h-3 rounded-sm flex-shrink-0" style={{ backgroundColor: project.color }} />}
+          {project && <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ backgroundColor: project.color }} />}
           <select
-            className="flex-1 p-1.5 rounded text-sm"
-            style={{ backgroundColor: 'var(--bg-surface)', color: 'var(--text-primary)', border: '1px solid var(--border)' }}
+            className="field flex-1"
             value={task.project_id ?? ''}
             onChange={(e) => handleUpdate({ project_id: e.target.value ? Number(e.target.value) : null })}
           >
@@ -230,12 +234,9 @@ export function TaskDetailPanel({ task, projects, people }: Props) {
 
       {/* Assignee */}
       <div>
-        <label className="text-xs uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
-          Assignee
-        </label>
+        <label className="text-xs font-medium tracking-wide uppercase" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>Assignee</label>
         <select
-          className="block w-full mt-1 p-1.5 rounded text-sm"
-          style={{ backgroundColor: 'var(--bg-surface)', color: 'var(--text-primary)', border: '1px solid var(--border)' }}
+          className="field mt-1"
           value={task.assignee_id ?? ''}
           onChange={(e) => handleUpdate({ assignee_id: e.target.value ? Number(e.target.value) : null })}
         >
@@ -246,13 +247,10 @@ export function TaskDetailPanel({ task, projects, people }: Props) {
 
       {/* Description */}
       <div>
-        <label className="text-xs uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
-          Description
-        </label>
+        <label className="text-xs font-medium tracking-wide uppercase" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>Description</label>
         <textarea
           rows={3}
-          className="block w-full mt-1 rounded text-sm p-2 resize-y"
-          style={{ backgroundColor: 'var(--bg-surface)', color: 'var(--text-primary)', border: '1px solid var(--border)', fontFamily: 'inherit' }}
+          className="field mt-1 resize-y"
           placeholder="Add description…"
           value={description}
           onChange={(e) => setDescription(e.target.value)}
@@ -262,19 +260,18 @@ export function TaskDetailPanel({ task, projects, people }: Props) {
 
       {/* Status */}
       <div>
-        <label className="text-xs uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
-          Status
-        </label>
-        <div className="flex gap-1 mt-1 flex-wrap">
+        <label className="text-xs font-medium tracking-wide uppercase" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>Status</label>
+        <div className="flex gap-1 mt-1.5 flex-wrap">
           {STATUS_OPTIONS.map((s) => (
             <button
               key={s}
               onClick={() => handleUpdate({ status: s })}
-              className="px-2 py-1 rounded text-xs font-medium"
+              className="px-2.5 py-1 rounded-full text-xs font-medium transition-all"
               style={{
-                backgroundColor: task.status === s ? STATUS_COLORS[s] : 'var(--bg-surface)',
-                color: task.status === s ? '#fff' : 'var(--text-muted)',
-                border: '1px solid var(--border)',
+                backgroundColor: task.status === s ? STATUS_COLORS[s] + '25' : 'transparent',
+                color: task.status === s ? STATUS_COLORS[s] : 'var(--text-muted)',
+                border: `1.5px solid ${task.status === s ? STATUS_COLORS[s] + '80' : 'transparent'}`,
+                outline: task.status === s ? 'none' : 'none',
               }}
             >
               {STATUS_LABELS[s]}
@@ -284,23 +281,21 @@ export function TaskDetailPanel({ task, projects, people }: Props) {
       </div>
 
       {/* Dates */}
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-2 gap-2">
         <div>
-          <label className="text-xs uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Start</label>
+          <label className="text-xs font-medium tracking-wide uppercase" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>Start</label>
           <input
             type="date"
-            className="block w-full mt-1 p-1.5 rounded text-sm"
-            style={{ backgroundColor: 'var(--bg-surface)', color: 'var(--text-primary)', border: '1px solid var(--border)' }}
+            className="field mt-1"
             value={task.start_date ?? ''}
             onChange={(e) => handleUpdate({ start_date: e.target.value || null })}
           />
         </div>
         <div>
-          <label className="text-xs uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>End</label>
+          <label className="text-xs font-medium tracking-wide uppercase" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>End</label>
           <input
             type="date"
-            className="block w-full mt-1 p-1.5 rounded text-sm"
-            style={{ backgroundColor: 'var(--bg-surface)', color: 'var(--text-primary)', border: '1px solid var(--border)' }}
+            className="field mt-1"
             value={task.end_date ?? ''}
             onChange={(e) => handleUpdate({ end_date: e.target.value || null })}
           />
@@ -310,19 +305,38 @@ export function TaskDetailPanel({ task, projects, people }: Props) {
       {/* Deadline */}
       {task.deadline && (
         <div>
-          <label className="text-xs uppercase tracking-wider" style={{ color: 'var(--today-line)' }}>
-            Hard Deadline
-          </label>
-          <div className="text-sm mt-1" style={{ color: 'var(--today-line)' }}>{task.deadline}</div>
+          <label className="text-xs font-medium tracking-wide uppercase" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>Deadline</label>
+          <div className="text-sm mt-1" style={{ color: 'var(--text-primary)' }}>{task.deadline}</div>
         </div>
       )}
 
+      {/* Hard deadline toggle */}
+      <div className="flex items-center gap-2">
+        <input
+          type="checkbox"
+          id="hard-deadline-toggle"
+          checked={hardDeadline}
+          onChange={(e) => {
+            setHardDeadline(e.target.checked);
+            handleUpdate({ hard_deadline: e.target.checked ? 1 : 0 });
+          }}
+          className="flex-shrink-0"
+          style={{ accentColor: 'var(--urgent)' }}
+        />
+        <label
+          htmlFor="hard-deadline-toggle"
+          className="text-sm cursor-pointer select-none"
+          style={{ color: hardDeadline ? 'var(--urgent)' : 'var(--text-muted)', transition: 'color 0.12s' }}
+        >
+          Hard deadline
+        </label>
+      </div>
+
       {/* Priority */}
       <div>
-        <label className="text-xs uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Priority</label>
+        <label className="text-xs font-medium tracking-wide uppercase" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>Priority</label>
         <select
-          className="block w-full mt-1 p-1.5 rounded text-sm"
-          style={{ backgroundColor: 'var(--bg-surface)', color: 'var(--text-primary)', border: '1px solid var(--border)' }}
+          className="field mt-1"
           value={task.priority}
           onChange={(e) => handleUpdate({ priority: Number(e.target.value) })}
         >
@@ -353,13 +367,13 @@ export function TaskDetailPanel({ task, projects, people }: Props) {
       {/* Tags */}
       {tags.length > 0 && (
         <div>
-          <label className="text-xs uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>Tags</label>
+          <label className="text-xs font-medium tracking-wide uppercase" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>Tags</label>
           <div className="flex gap-1 mt-1 flex-wrap">
             {tags.map((tag) => (
               <span
                 key={tag}
                 className="px-2 py-0.5 rounded-full text-xs"
-                style={{ backgroundColor: 'var(--bg-surface)', color: 'var(--text-muted)', border: '1px solid var(--border)' }}
+                style={{ backgroundColor: 'var(--bg-surface)', color: 'var(--text-muted)' }}
               >
                 {tag}
               </span>
@@ -370,14 +384,12 @@ export function TaskDetailPanel({ task, projects, people }: Props) {
 
       {/* Notes + Checklist */}
       <div>
-        <div className="flex items-center justify-between mb-1">
-          <label className="text-xs uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
-            Notes
-          </label>
+        <div className="flex items-center justify-between mb-1.5">
+          <label className="text-xs font-medium tracking-wide uppercase" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>Notes</label>
           <button
             onClick={() => setShowChecklist((v) => !v)}
-            className="text-xs px-2 py-0.5 rounded"
-            style={{ border: '1px solid var(--border)', color: 'var(--text-muted)', backgroundColor: showChecklist ? 'var(--accent)' : 'transparent', color: showChecklist ? '#fff' : 'var(--text-muted)' }}
+            className={`btn-ghost text-xs ${showChecklist ? 'active' : ''}`}
+            style={{ padding: '2px 8px', borderRadius: 999 }}
           >
             ✓ Checklist
           </button>
@@ -385,8 +397,7 @@ export function TaskDetailPanel({ task, projects, people }: Props) {
 
         <textarea
           rows={4}
-          className="block w-full rounded text-sm p-2 resize-y"
-          style={{ backgroundColor: 'var(--bg-surface)', color: 'var(--text-primary)', border: '1px solid var(--border)', fontFamily: 'inherit' }}
+          className="field resize-y"
           placeholder="Add notes…"
           value={freeform}
           onChange={(e) => setFreeform(e.target.value)}
@@ -394,7 +405,7 @@ export function TaskDetailPanel({ task, projects, people }: Props) {
         />
 
         {showChecklist && (
-          <div className="mt-2 space-y-1">
+          <div className="mt-2 space-y-1.5">
             {checklist.map((item) => (
               <div key={item.id} className="flex items-center gap-2">
                 <input
@@ -405,21 +416,18 @@ export function TaskDetailPanel({ task, projects, people }: Props) {
                 />
                 <input
                   type="text"
-                  className="flex-1 text-sm bg-transparent outline-none border-b"
+                  className="flex-1 text-sm bg-transparent outline-none"
                   style={{
                     color: item.done ? 'var(--text-muted)' : 'var(--text-primary)',
                     textDecoration: item.done ? 'line-through' : 'none',
-                    borderColor: 'var(--border)',
+                    borderBottom: '1px solid var(--border)',
+                    paddingBottom: 1,
                   }}
                   value={item.text}
                   onChange={(e) => updateItemText(item.id, e.target.value)}
                   onBlur={() => commitItemText(item.id)}
                 />
-                <button
-                  onClick={() => deleteItem(item.id)}
-                  className="text-xs flex-shrink-0"
-                  style={{ color: 'var(--text-muted)' }}
-                >
+                <button onClick={() => deleteItem(item.id)} className="btn-icon flex-shrink-0" style={{ width: 18, height: 18, fontSize: '0.85rem' }}>
                   ×
                 </button>
               </div>
@@ -428,31 +436,23 @@ export function TaskDetailPanel({ task, projects, people }: Props) {
             <div className="flex items-center gap-2 mt-1">
               <input
                 type="text"
-                className="flex-1 text-sm bg-transparent outline-none border-b"
-                style={{ color: 'var(--text-primary)', borderColor: 'var(--border)' }}
+                className="flex-1 text-sm bg-transparent outline-none"
+                style={{ color: 'var(--text-primary)', borderBottom: '1px solid var(--border)', paddingBottom: 1 }}
                 placeholder="Add item…"
                 value={newItemText}
                 onChange={(e) => setNewItemText(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addItem(); } }}
               />
-              <button
-                onClick={addItem}
-                className="text-xs px-2 py-0.5 rounded"
-                style={{ border: '1px solid var(--border)', color: 'var(--text-muted)' }}
-              >
-                +
-              </button>
+              <button onClick={addItem} className="btn-icon" style={{ width: 20, height: 20 }}>+</button>
             </div>
           </div>
         )}
       </div>
 
       {/* Metadata */}
-      <div className="text-xs mt-2" style={{ color: 'var(--text-muted)' }}>
-        <div>ID: {task.id} {task.yaml_id && `(${task.yaml_id})`}</div>
-        <div>Type: {task.type}</div>
-        <div>Created: {task.created_at}</div>
-        <div>Updated: {task.updated_at}</div>
+      <div className="text-xs mt-1 space-y-0.5" style={{ color: 'var(--text-muted)', opacity: 0.5 }}>
+        <div>ID: {task.id} {task.yaml_id && `(${task.yaml_id})`} · {task.type}</div>
+        <div>Created: {task.created_at?.slice(0, 10)}</div>
       </div>
 
       {/* Delete */}
@@ -461,8 +461,10 @@ export function TaskDetailPanel({ task, projects, people }: Props) {
           deleteTask.mutate(task.id);
           setSelectedTaskId(null);
         }}
-        className="w-full mt-2 py-2 rounded text-sm font-medium"
-        style={{ backgroundColor: '#ef444420', color: '#ef4444', border: '1px solid #ef444460' }}
+        className="w-full mt-1 py-1.5 rounded-lg text-sm font-medium transition-colors"
+        style={{ backgroundColor: '#FF5A6F18', color: 'var(--urgent)', border: 'none' }}
+        onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = '#FF5A6F28'; }}
+        onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = '#FF5A6F18'; }}
       >
         Delete task
       </button>

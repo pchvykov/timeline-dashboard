@@ -43,6 +43,7 @@ export interface Task {
   tags: string;
   notes: string | null;
   deadline: string | null;
+  hard_deadline: number;
   lane_y: number;
   created_at: string;
   updated_at: string;

@@ -4,6 +4,7 @@ import {
   useCallback,
   useEffect,
   useState,
+  Fragment,
 } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { TaskDetailModal } from './TaskDetailModal';
@@ -13,6 +14,7 @@ import { api } from '../../lib/api';
 import { useMoveTask, useUpdateTask, useCreateTask, useDeleteTask, useAddDependency, useDeleteDependency } from '../../hooks/useTasks';
 import { useUIStore } from '../../store/uiStore';
 import { useUndoStore } from '../../store/undoStore';
+import { computeAutoArrange } from '../../lib/autoArrange';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 const LANE_HEADER_WIDTH = 140;
@@ -39,6 +41,7 @@ interface Props {
   tasks: Task[];
   projects: Project[];
   people: Person[];
+  autoArrangeRef?: { current: ((() => Promise<void>) | null) };
 }
 
 interface DateRange {
@@ -97,17 +100,13 @@ function getDisplayDates(task: Task): DateRange | null {
   return null;
 }
 
+const URGENT_COLOR = '#FFDDDD';//'#FF5A6F';
+
 function projectColor(projectId: number | null, projects: Project[]): string {
   if (!projectId) return '#6b7280';
   return projects.find((p) => p.id === projectId)?.color ?? '#6b7280';
 }
 
-const STATUS_BORDER: Record<string, string> = {
-  todo: '#9ca3af',
-  in_progress: '#3b82f6',
-  blocked: '#ef4444',
-  done: '#22c55e',
-};
 
 function dateToX(date: Date, viewStart: Date, pxPerDay: number): number {
   return differenceInCalendarDays(date, viewStart) * pxPerDay;
@@ -232,7 +231,7 @@ function BezierArrow({
 }
 
 // ── Main Component ───────────────────────────────────────────────────────────
-export function CustomGantt({ tasks, projects, people }: Props) {
+export function CustomGantt({ tasks, projects, people, autoArrangeRef }: Props) {
   const qc = useQueryClient();
   const moveTask = useMoveTask();
   const updateTask = useUpdateTask();
@@ -292,6 +291,8 @@ export function CustomGantt({ tasks, projects, people }: Props) {
   const [dragOverLaneId, setDragOverLaneId] = useState<string | null>(null);
   const laneReorder = useRef<{ srcLaneId: string; startY: number } | null>(null);
   const [tooltip, setTooltip] = useState<{ text: string; x: number; y: number } | null>(null);
+  const [previewLaneY, setPreviewLaneY] = useState<Map<number, number> | null>(null);
+  const previewClearTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── Multi-select state ───────────────────────────────────────────────────
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<number>>(new Set());
@@ -425,16 +426,53 @@ export function CustomGantt({ tasks, projects, people }: Props) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tasks]);
 
+  // ── Auto-Arrange: iterative row packer (v2 spec) ────────────────────────
+  const handleAutoArrange = useCallback(async () => {
+    const updates: { id: number; oldLaneY: number; newLaneY: number }[] = [];
+    const preview = new Map<number, number>();
+
+    lanes.forEach((lane) => {
+      const newPositions = computeAutoArrange(lane.tasks, tasks);
+      newPositions.forEach((newLaneY, taskId) => {
+        const task = lane.tasks.find((t) => t.id === taskId);
+        if (!task) return;
+        preview.set(taskId, newLaneY);
+        const oldLaneY = task.lane_y >= 0 ? task.lane_y : (autoLayoutRef.current[taskId] ?? 0);
+        if (newLaneY !== oldLaneY) updates.push({ id: taskId, oldLaneY: task.lane_y, newLaneY });
+      });
+    });
+
+    if (updates.length === 0) return;
+
+    // Animate to new positions immediately, before the DB round-trip
+    if (previewClearTimer.current) clearTimeout(previewClearTimer.current);
+    setPreviewLaneY(preview);
+
+    await Promise.all(updates.map(({ id, newLaneY }) => api.updateTask(id, { lane_y: newLaneY })));
+
+    const invalidate = () => qc.invalidateQueries({ queryKey: ['tasks'] });
+    useUndoStore.getState().push({
+      label: 'Auto-arrange',
+      undo: () => Promise.all(updates.map(({ id, oldLaneY }) => api.updateTask(id, { lane_y: oldLaneY }))).then(invalidate),
+      redo: () => Promise.all(updates.map(({ id, newLaneY }) => api.updateTask(id, { lane_y: newLaneY }))).then(invalidate),
+    });
+
+    await invalidate();
+    // Clear preview after the refetch has landed (animation is 400ms; 1200ms is safe headroom)
+    previewClearTimer.current = setTimeout(() => setPreviewLaneY(null), 1200);
+  }, [lanes, tasks, qc]);
+
+  useEffect(() => {
+    if (autoArrangeRef) autoArrangeRef.current = handleAutoArrange;
+  }, [autoArrangeRef, handleAutoArrange]);
+
   // ── Compute lane heights ─────────────────────────────────────────────────
   const laneHeightMap = useMemo(() => {
     const map: Record<string, number> = {};
     lanes.forEach((lane) => {
-      // Compute min height needed
       let maxRow = 0;
       lane.tasks.forEach((task) => {
-        const laneY = task.lane_y >= 0
-          ? task.lane_y
-          : (autoLayoutRef.current[task.id] ?? 0);
+        const laneY = previewLaneY?.get(task.id) ?? (task.lane_y >= 0 ? task.lane_y : (autoLayoutRef.current[task.id] ?? 0));
         if (laneY > maxRow) maxRow = laneY;
       });
       const minH = (maxRow + 1) * TASK_ROW_HEIGHT + 16;
@@ -442,7 +480,7 @@ export function CustomGantt({ tasks, projects, people }: Props) {
       map[lane.id] = Math.max(stored, minH, MIN_LANE_HEIGHT);
     });
     return map;
-  }, [lanes, laneHeights]);
+  }, [lanes, laneHeights, previewLaneY]);
 
   const totalHeight = useMemo(() => {
     return DATE_HEADER_HEIGHT +
@@ -470,15 +508,13 @@ export function CustomGantt({ tasks, projects, people }: Props) {
         if (!dates) return;
         const x = dateToX(dates.start, viewStart, pxPerDay);
         const w = Math.max(dateToX(dates.end, viewStart, pxPerDay) - x, 4);
-        const laneY = task.lane_y >= 0
-          ? task.lane_y
-          : (autoLayoutRef.current[task.id] ?? 0);
+        const laneY = previewLaneY?.get(task.id) ?? (task.lane_y >= 0 ? task.lane_y : (autoLayoutRef.current[task.id] ?? 0));
         const y = laneTop + laneY * TASK_ROW_HEIGHT + 4;
         map.set(task.id, { x, y, w, h: TASK_HEIGHT });
       });
     });
     return map;
-  }, [lanes, laneTopMap, viewStart, pxPerDay]);
+  }, [lanes, laneTopMap, viewStart, pxPerDay, previewLaneY]);
 
   // ── Today line ──────────────────────────────────────────────────────────
   const todayX = useMemo(
@@ -710,7 +746,9 @@ export function CustomGantt({ tasks, projects, people }: Props) {
         const snappedScreenY = snap
           ? scrollRect.top - scrollRef.current.scrollTop + (laneTopMap[snap.lane.id] ?? 0) + snap.row * TASK_ROW_HEIGHT + 4
           : e.clientY - TASK_HEIGHT / 2;
-        // Build overlay array: primary ghost at snapped Y, co-task ghosts at their original Y + horizontal shift
+        // Build overlay array: primary ghost at snapped Y, co-task ghosts shifted by same Y delta
+        const primaryOrigScreenY = rect ? rect.y - scrollRef.current.scrollTop + scrollRect.top : snappedScreenY;
+        const primaryDeltaScreenY = snappedScreenY - primaryOrigScreenY;
         const overlays = [{ taskId: ds.taskId, x, y: snappedScreenY, width, color }];
         if (ds.coTaskSnapshots) {
           for (const coSnap of ds.coTaskSnapshots) {
@@ -719,7 +757,7 @@ export function CustomGantt({ tasks, projects, people }: Props) {
             if (!coTask || !coRect) continue;
             const coNewStart = addDays(coSnap.originalStart, Math.round(dx / pxPerDay));
             const coX = dateToX(coNewStart, viewStart, pxPerDay) - scrollRef.current.scrollLeft + scrollRect.left;
-            const coScreenY = coRect.y - scrollRef.current.scrollTop + scrollRect.top;
+            const coScreenY = coRect.y - scrollRef.current.scrollTop + scrollRect.top + primaryDeltaScreenY;
             overlays.push({ taskId: coSnap.taskId, x: coX, y: coScreenY, width: coRect.w, color: projectColor(coTask.project_id, projects) });
           }
         }
@@ -922,6 +960,14 @@ export function CustomGantt({ tasks, projects, people }: Props) {
 
             const updSnaps: UpdSnap[] = [];
 
+            // Compute row delta from primary's effective (displayed) row to avoid issues with auto-layout sentinels
+            const primaryRect = taskRectMap.get(ds.taskId);
+            const primaryLaneTop = laneTopMap[ds.originalLaneKey] ?? 0;
+            const effectivePrimaryOrigRow = primaryRect
+              ? Math.round((primaryRect.y - primaryLaneTop - 4) / TASK_ROW_HEIGHT)
+              : Math.max(0, ds.originalLaneY);
+            const rowDelta = newLaneY - effectivePrimaryOrigRow;
+
             // Primary: lane + row
             const primNew: Partial<Task> = {};
             const primOrig: Partial<Task> = {};
@@ -929,14 +975,30 @@ export function CustomGantt({ tasks, projects, people }: Props) {
             if (rowChanged)         { primNew.lane_y = newLaneY;           primOrig.lane_y = task.lane_y; }
             if (Object.keys(primNew).length > 0) updSnaps.push({ id: ds.taskId, newData: primNew, origData: primOrig });
 
-            // Co-tasks: move to drop lane whenever their current assignee differs
-            // (direct comparison, no dependence on primaryLaneChanged)
-            if (dropLane) {
-              for (const s of ds.coTaskSnapshots) {
-                const ct = tasks.find((t) => t.id === s.taskId);
-                if (!ct || ct.assignee_id === newAssigneeId) continue;
-                updSnaps.push({ id: s.taskId, newData: { assignee_id: newAssigneeId }, origData: { assignee_id: ct.assignee_id } });
+            // Co-tasks: sync lane and apply same row delta as primary
+            for (const s of ds.coTaskSnapshots) {
+              const ct = tasks.find((t) => t.id === s.taskId);
+              if (!ct) continue;
+              const coNew: Partial<Task> = {};
+              const coOrig: Partial<Task> = {};
+              if (dropLane && ct.assignee_id !== newAssigneeId) {
+                coNew.assignee_id = newAssigneeId;
+                coOrig.assignee_id = ct.assignee_id;
               }
+              if (rowDelta !== 0) {
+                const coRect = taskRectMap.get(s.taskId);
+                const coLaneKey = ct.assignee_id != null ? `person-${ct.assignee_id}` : 'unassigned';
+                const coLaneTop = laneTopMap[coLaneKey] ?? 0;
+                const coEffectiveRow = coRect
+                  ? Math.round((coRect.y - coLaneTop - 4) / TASK_ROW_HEIGHT)
+                  : Math.max(0, s.originalLaneY);
+                const coNewLaneY = Math.max(0, coEffectiveRow + rowDelta);
+                if (coNewLaneY !== coEffectiveRow) {
+                  coNew.lane_y = coNewLaneY;
+                  coOrig.lane_y = s.originalLaneY;
+                }
+              }
+              if (Object.keys(coNew).length > 0) updSnaps.push({ id: s.taskId, newData: coNew, origData: coOrig });
             }
 
             // Fire via mutation hooks (skipUndo=true) so cache + network handling is proven
@@ -992,7 +1054,7 @@ export function CustomGantt({ tasks, projects, people }: Props) {
 
       dragState.current = null;
     },
-    [pxPerDay, addDependency, moveTask, updateTask, getNearestSnapRow, tasks, taskRectMap, dragOverLaneId, lanes, setPersonOrder, qc]
+    [pxPerDay, addDependency, moveTask, updateTask, getNearestSnapRow, tasks, taskRectMap, dragOverLaneId, lanes, setPersonOrder, qc, laneTopMap]
   );
 
   // Register global mouse events
@@ -1098,24 +1160,23 @@ export function CustomGantt({ tasks, projects, people }: Props) {
     >
       {/* Toolbar */}
       <div
-        className="flex items-center gap-2 px-3 border-b flex-shrink-0"
-        style={{ height: 36, borderColor: 'var(--border)', backgroundColor: 'var(--bg-elevated)' }}
+        className="flex items-center gap-1 px-3 border-b flex-shrink-0"
+        style={{ height: 34, borderColor: 'var(--border)', backgroundColor: 'var(--bg-elevated)' }}
       >
-        <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Zoom:</span>
+        <span className="text-xs mr-1" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>Zoom</span>
         <button
           onClick={() => {
             if (!scrollRef.current) return;
             const half = scrollRef.current.clientWidth / 2;
             zoomToFactor(1 / 1.5, scrollRef.current.scrollLeft + half, half);
           }}
-          className="w-6 h-6 rounded flex items-center justify-center text-sm font-bold"
-          style={{ border: '1px solid var(--border)', color: 'var(--text-muted)' }}
+          className="btn-icon"
           title="Zoom out"
         >
           −
         </button>
         <span
-          className="text-xs font-medium w-14 text-center"
+          className="text-xs font-medium w-12 text-center"
           style={{ color: 'var(--text-primary)' }}
         >
           {zoomLabel(pxPerDay)}
@@ -1126,14 +1187,13 @@ export function CustomGantt({ tasks, projects, people }: Props) {
             const half = scrollRef.current.clientWidth / 2;
             zoomToFactor(1.5, scrollRef.current.scrollLeft + half, half);
           }}
-          className="w-6 h-6 rounded flex items-center justify-center text-sm font-bold"
-          style={{ border: '1px solid var(--border)', color: 'var(--text-muted)' }}
+          className="btn-icon"
           title="Zoom in"
         >
           +
         </button>
-        <span className="text-xs ml-4" style={{ color: 'var(--text-muted)' }}>
-          {visibleTaskCount} tasks with dates
+        <span className="text-xs ml-3" style={{ color: 'var(--text-muted)', opacity: 0.5 }}>
+          {visibleTaskCount} tasks
         </span>
       </div>
 
@@ -1352,98 +1412,148 @@ export function CustomGantt({ tasks, projects, people }: Props) {
                       dateToX(dates.end, viewStart, pxPerDay) - x,
                       task.type === 'milestone' ? pxPerDay : 4
                     );
-                    const laneY = task.lane_y !== 0
-                      ? task.lane_y
-                      : computedLaneY(task, lane.tasks);
+                    const laneY = previewLaneY?.get(task.id) ?? (task.lane_y !== 0 ? task.lane_y : computedLaneY(task, lane.tasks));
                     const barTop = laneY * TASK_ROW_HEIGHT + 4;
                     const color = projectColor(task.project_id, projects);
-                    const statusBorderColor = STATUS_BORDER[task.status] ?? '#9ca3af';
 
                     const isDragging = dragState.current?.taskId === task.id ||
                       (dragState.current?.coTaskSnapshots?.some((s) => s.taskId === task.id) ?? false);
                     const isDone = task.status === 'done';
                     const isSelected = selectedTaskIds.has(task.id);
-                    // density 0–100 → opacity 0–1.0 linear; done tasks always muted
-                    const densityOpacity = isDone ? 0.28 : 0.1 + (task.density / 100) * 0.9;
+                    const isHigh = task.priority === 3;
+                    const isLow = task.priority === 1;
+
+                    // Priority-based border (project color, style by priority)
+                    const borderStyle = isLow ? 'dashed' : 'solid';
+                    const priorityBorder = `1.5px ${borderStyle} ${color}B0`;
+                    const priorityShadow = isHigh ? `0 0 0 1.5px ${URGENT_COLOR}, 0 0 8px 2px ${URGENT_COLOR}40` : 'none';
+
+                    // Bar background: subtle project-color tint
+                    const barBg = color + '18';
+
+                    // Density → fill height from bottom (min 5%)
+                    const fillPct = Math.max(5, task.density);
 
                     return (
-                      <div
-                        key={task.id}
-                        onMouseEnter={(e) => setTooltip({ text: task.title, x: e.clientX, y: e.clientY - 32 })}
-                        onMouseMove={(e) => setTooltip((t) => t ? { ...t, x: e.clientX, y: e.clientY - 32 } : null)}
-                        onMouseLeave={() => setTooltip(null)}
-                        style={{
-                          position: 'absolute',
-                          left: x,
-                          top: barTop,
-                          width: w,
-                          height: TASK_HEIGHT,
-                          backgroundColor: isDone ? color + '33' : color + 'cc',
-                          border: isSelected
-                            ? `2px solid white`
-                            : isDone ? `1.5px dashed ${color}88` : `none`,
-                          borderLeft: isSelected
-                            ? `2px solid white`
-                            : isDone ? `1.5px dashed ${color}88` : `3px solid ${statusBorderColor}`,
-                          borderRadius: task.type === 'milestone' ? '3px' : '4px',
-                          display: 'flex',
-                          alignItems: 'center',
-                          paddingLeft: 5,
-                          cursor: 'grab',
-                          userSelect: 'none',
-                          zIndex: isDragging ? 15 : isSelected ? 8 : 6,
-                          opacity: isDragging ? 0.4 : densityOpacity,
-                          boxShadow: isSelected
-                            ? `0 0 0 2px ${color}`
-                            : isDone ? 'none' : '0 1px 3px rgba(0,0,0,0.2)',
-                          overflow: 'hidden',
-                          boxSizing: 'border-box',
-                        }}
-                        onMouseDown={(e) => handleTaskMouseDown(e, task, 'move', lane.id)}
-                        onDoubleClick={(e) => { e.stopPropagation(); setSelectedTaskId(task.id); }}
-                      >
-                        {/* Task title */}
-                        <span
+                      <Fragment key={task.id}>
+                        {/* Task bar */}
+                        <div
+                          onMouseEnter={(e) => setTooltip({ text: task.title, x: e.clientX, y: e.clientY - 32 })}
+                          onMouseMove={(e) => setTooltip((t) => t ? { ...t, x: e.clientX, y: e.clientY - 32 } : null)}
+                          onMouseLeave={() => setTooltip(null)}
                           style={{
-                            fontSize: 11,
-                            color: '#ffffff',
+                            position: 'absolute',
+                            left: x,
+                            top: barTop,
+                            width: w,
+                            height: TASK_HEIGHT,
+                            backgroundColor: barBg,
+                            border: priorityBorder,
+                            borderRadius: task.type === 'milestone' ? '4px' : '6px',
+                            cursor: 'grab',
+                            userSelect: 'none',
+                            zIndex: isDragging ? 15 : isSelected ? 8 : 6,
+                            opacity: isDone ? 0.2 : isDragging ? 0.4 : 1,
+                            outline: isSelected ? '2px solid var(--accent)' : 'none',
+                            outlineOffset: '2px',
                             overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
-                            flex: 1,
-                            textShadow: '0 1px 2px rgba(0,0,0,0.5)',
-                            pointerEvents: 'none',
+                            boxSizing: 'border-box',
+                            boxShadow: priorityShadow,
+                            transition: previewLaneY ? 'top 0.4s ease' : undefined,
                           }}
+                          onMouseDown={(e) => handleTaskMouseDown(e, task, 'move', lane.id)}
+                          onDoubleClick={(e) => { e.stopPropagation(); setSelectedTaskId(task.id); }}
                         >
-                          {task.title}
-                        </span>
-
-                        {/* Progress bar */}
-                        {task.progress > 0 && (
+                          {/* Density fill — rises from the bottom */}
                           <div
                             style={{
                               position: 'absolute',
                               bottom: 0,
-                              left: 3,
-                              width: `${task.progress}%`,
-                              height: 2,
-                              backgroundColor: 'rgba(255,255,255,0.6)',
-                              borderRadius: 1,
+                              left: 0,
+                              right: 0,
+                              height: `${fillPct}%`,
+                              backgroundColor: color + '55',
                               pointerEvents: 'none',
                             }}
                           />
-                        )}
 
-                        <div
-                          style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 6, cursor: 'ew-resize', zIndex: 2 }}
-                          onMouseDown={(e) => { e.stopPropagation(); handleTaskMouseDown(e, task, 'resize-left', lane.id); }}
-                        />
-                        <div
-                          style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 6, cursor: 'ew-resize', zIndex: 2 }}
-                          onMouseDown={(e) => { e.stopPropagation(); handleTaskMouseDown(e, task, 'resize-right', lane.id); }}
-                        />
-                        <ConnectDot task={task} lane={lane} onMouseDown={handleTaskMouseDown} />
-                      </div>
+                          {/* Task title */}
+                          <span
+                            style={{
+                              position: 'absolute',
+                              top: 0,
+                              left: 5,
+                              right: 5,
+                              bottom: 0,
+                              display: 'flex',
+                              alignItems: 'center',
+                              fontSize: 11,
+                              color: color,
+                              fontWeight: isHigh ? 700 : 400,
+                              opacity: 1,
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                              zIndex: 2,
+                              pointerEvents: 'none',
+                              // Shadow uses bg-base so text stays readable over the fill in both light/dark themes
+                              textShadow: '0 0 4px var(--bg-base), 0 0 4px var(--bg-base)',
+                            }}
+                          >
+                            {task.title}
+                          </span>
+
+                          {/* Progress bar */}
+                          {task.progress > 0 && (
+                            <div
+                              style={{
+                                position: 'absolute',
+                                bottom: 0,
+                                left: 0,
+                                width: `${task.progress}%`,
+                                height: 2,
+                                backgroundColor: color,
+                                opacity: 0.8,
+                                borderRadius: 1,
+                                pointerEvents: 'none',
+                                zIndex: 3,
+                              }}
+                            />
+                          )}
+
+                          <div
+                            style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 6, cursor: 'ew-resize', zIndex: 4 }}
+                            onMouseDown={(e) => { e.stopPropagation(); handleTaskMouseDown(e, task, 'resize-left', lane.id); }}
+                          />
+                          <div
+                            style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 6, cursor: 'ew-resize', zIndex: 4 }}
+                            onMouseDown={(e) => { e.stopPropagation(); handleTaskMouseDown(e, task, 'resize-right', lane.id); }}
+                          />
+                          <ConnectDot task={task} lane={lane} onMouseDown={handleTaskMouseDown} />
+                        </div>
+
+                        {/* Hard deadline I-bar — rendered as sibling so it escapes task overflow */}
+                        {task.hard_deadline ? (
+                          <div
+                            style={{
+                              position: 'absolute',
+                              left: x + w - 1,
+                              top: barTop - 7,
+                              height: TASK_HEIGHT + 14,
+                              width: 3,
+                              backgroundColor: URGENT_COLOR,
+                              pointerEvents: 'none',
+                              zIndex: 20,
+                              transition: previewLaneY ? 'top 0.4s ease' : undefined,
+                            }}
+                          >
+                            {/* Top serif */}
+                            <div style={{ position: 'absolute', top: 0, left: -5, right: -5, height: 3, backgroundColor: URGENT_COLOR }} />
+                            {/* Bottom serif */}
+                            <div style={{ position: 'absolute', bottom: 0, left: -5, right: -5, height: 3, backgroundColor: URGENT_COLOR }} />
+                          </div>
+                        ) : null}
+                      </Fragment>
                     );
                   })}
 

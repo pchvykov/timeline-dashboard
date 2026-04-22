@@ -1,10 +1,118 @@
-import { useRef, useState, useCallback } from 'react';
+import { useRef, useState, useCallback, useEffect } from 'react';
 import {
   useProjects, usePeople,
   useUpdateProject, useCreateProject,
   useUpdatePerson, useCreatePerson, useDeletePerson,
 } from '../../hooks/useTasks';
 import { useUIStore } from '../../store/uiStore';
+
+const PROJECT_COLORS = [
+  '#5CAAED', '#E99202', '#009E73', '#CC79A7', '#F3B817',
+  '#8062EB', '#00AAE3', '#D85202', '#89BD00', '#E76F92',
+  '#85C4F2', '#009FB0', '#9664E6', '#C97F02', '#0066BC',
+];
+
+// ── Color picker popover with preset swatches ─────────────────────────────────
+function ColorPickerPopover({
+  color,
+  shape = 'square',
+  children,
+  onChange,
+}: {
+  color: string;
+  shape?: 'square' | 'circle';
+  children: React.ReactNode;
+  onChange: (c: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  const isPreset = PROJECT_COLORS.includes(color);
+
+  return (
+    <div ref={ref} style={{ position: 'relative', flexShrink: 0 }}>
+      <div
+        title="Change color"
+        style={{ cursor: 'pointer' }}
+        onClick={() => setOpen((v) => !v)}
+      >
+        {children}
+      </div>
+      {open && (
+        <div
+          style={{
+            position: 'absolute',
+            top: '100%',
+            left: 0,
+            zIndex: 200,
+            backgroundColor: 'var(--bg-elevated)',
+            border: '1px solid var(--border)',
+            borderRadius: 6,
+            padding: 6,
+            display: 'grid',
+            gridTemplateColumns: 'repeat(5, 16px)',
+            gap: 4,
+            marginTop: 3,
+            boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {PROJECT_COLORS.map((c) => (
+            <div
+              key={c}
+              style={{
+                width: 16,
+                height: 16,
+                borderRadius: shape === 'circle' ? '50%' : 3,
+                backgroundColor: c,
+                cursor: 'pointer',
+                outline: c === color ? '2px solid var(--text-primary)' : 'none',
+                outlineOffset: 1,
+              }}
+              onClick={() => { onChange(c); setOpen(false); }}
+            />
+          ))}
+          <label
+            title="Custom color"
+            style={{ position: 'relative', cursor: 'pointer', width: 16, height: 16 }}
+          >
+            <div
+              style={{
+                width: 16,
+                height: 16,
+                borderRadius: shape === 'circle' ? '50%' : 3,
+                backgroundColor: isPreset ? 'var(--bg-surface)' : color,
+                border: '1px solid var(--border)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: 10,
+                color: 'var(--text-muted)',
+              }}
+            >
+              +
+            </div>
+            <input
+              type="color"
+              value={color}
+              onChange={(e) => onChange(e.target.value)}
+              style={{ position: 'absolute', inset: 0, opacity: 0, width: '100%', height: '100%', cursor: 'pointer', padding: 0, border: 'none' }}
+            />
+          </label>
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ── Inline-rename input ───────────────────────────────────────────────────────
 function RenameInput({
@@ -49,15 +157,9 @@ function NewItemForm({
 
   return (
     <li className="flex items-center gap-2 py-1 px-1">
-      <label style={{ position: 'relative', flexShrink: 0, cursor: 'pointer' }}>
+      <ColorPickerPopover color={color} onChange={setColor}>
         <span className="w-3 h-3 rounded-sm block" style={{ backgroundColor: color }} />
-        <input
-          type="color"
-          value={color}
-          onChange={(e) => setColor(e.target.value)}
-          style={{ position: 'absolute', inset: 0, opacity: 0, width: '100%', height: '100%', cursor: 'pointer', padding: 0, border: 'none' }}
-        />
-      </label>
+      </ColorPickerPopover>
       <input
         autoFocus
         className="flex-1 text-sm bg-transparent outline-none border-b min-w-0"
@@ -153,32 +255,23 @@ export function Sidebar() {
 
   return (
     <aside
-      className="w-60 flex-shrink-0 border-r overflow-y-auto p-4"
+      className="w-56 flex-shrink-0 border-r overflow-y-auto py-4 px-3"
       style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
     >
       {/* ── Projects ── */}
-      <div className="flex items-center justify-between mb-2">
-        <h2 className="text-sm font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+      <div className="flex items-center justify-between mb-1.5">
+        <span className="text-xs font-semibold tracking-wider uppercase" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>
           Projects
-        </h2>
-        <button
-          onClick={() => setAddingProject(true)}
-          className="text-xs px-1.5 py-0.5 rounded"
-          style={{ color: 'var(--text-muted)', border: '1px solid var(--border)' }}
-          title="New project"
-        >
+        </span>
+        <button onClick={() => setAddingProject(true)} className="btn-icon" style={{ width: 20, height: 20, fontSize: '1rem' }} title="New project">
           +
         </button>
       </div>
 
       <button
         onClick={showAllProjects}
-        className="text-xs mb-2 px-2 py-1 rounded"
-        style={{
-          backgroundColor: visibleProjectIds === null ? 'var(--accent)' : 'transparent',
-          color: visibleProjectIds === null ? '#fff' : 'var(--text-muted)',
-          border: '1px solid var(--border)',
-        }}
+        className={`btn-ghost text-xs mb-2 ${visibleProjectIds === null ? 'active' : ''}`}
+        style={{ padding: '2px 8px', borderRadius: 999 }}
       >
         Show All
       </button>
@@ -212,19 +305,19 @@ export function Sidebar() {
               style={{ borderTop: isOver ? '2px solid var(--accent)' : '2px solid transparent' }}
             >
               <div
-                className="group flex items-center gap-2 text-sm py-1 px-1 rounded"
-                style={{ opacity: checked ? (p.archived ? 0.5 : 1) : 0.4 }}
+                className="group flex items-center gap-2 text-sm py-1 px-2 rounded-md"
+                style={{
+                  opacity: checked ? (p.archived ? 0.5 : 1) : 0.4,
+                  transition: 'background-color 0.1s',
+                  cursor: 'default',
+                }}
+                onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = 'rgba(128,128,128,0.08)'; }}
+                onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent'; }}
               >
                 {/* Color swatch */}
-                <label title="Change color" style={{ position: 'relative', flexShrink: 0, cursor: 'pointer' }}>
+                <ColorPickerPopover color={p.color} onChange={(c) => updateProject.mutate({ id: p.id, data: { color: c } })}>
                   <span className="w-3 h-3 rounded-sm block" style={{ backgroundColor: p.color }} />
-                  <input
-                    type="color"
-                    defaultValue={p.color}
-                    onChange={(e) => updateProject.mutate({ id: p.id, data: { color: e.target.value } })}
-                    style={{ position: 'absolute', inset: 0, opacity: 0, width: '100%', height: '100%', cursor: 'pointer', padding: 0, border: 'none' }}
-                  />
-                </label>
+                </ColorPickerPopover>
                 <input
                   type="checkbox"
                   checked={checked}
@@ -240,7 +333,7 @@ export function Sidebar() {
                   />
                 ) : (
                   <span
-                    className="truncate flex-1 cursor-pointer"
+                    className="truncate flex-1 cursor-pointer text-xs"
                     style={{ color: 'var(--text-primary)', textDecoration: p.archived ? 'line-through' : 'none' }}
                     onClick={() => toggleProjectVisibility(p.id)}
                     onDoubleClick={() => setRenamingProjectId(p.id)}
@@ -252,15 +345,15 @@ export function Sidebar() {
                 {/* Archive toggle — visible on hover */}
                 {!isRenaming && (
                   <button
-                    className="opacity-0 group-hover:opacity-60 hover:!opacity-100 text-xs flex-shrink-0"
-                    style={{ color: p.archived ? 'var(--accent)' : 'var(--text-muted)' }}
+                    className="opacity-0 group-hover:opacity-60 hover:!opacity-100 btn-icon flex-shrink-0"
+                    style={{ width: 16, height: 16, fontSize: '0.7rem', color: p.archived ? 'var(--accent)' : 'var(--text-muted)' }}
                     title={p.archived ? 'Unarchive' : 'Archive'}
                     onClick={(e) => { e.stopPropagation(); updateProject.mutate({ id: p.id, data: { archived: p.archived ? 0 : 1 } }); }}
                   >
                     {p.archived ? '↩' : '⊘'}
                   </button>
                 )}
-                <span style={{ fontSize: 10, color: 'var(--text-muted)', opacity: 0.4, flexShrink: 0, cursor: 'grab' }}>⠿</span>
+                <span style={{ fontSize: 9, color: 'var(--text-muted)', opacity: 0.35, flexShrink: 0, cursor: 'grab' }}>⠿</span>
               </div>
             </li>
           );
@@ -268,7 +361,7 @@ export function Sidebar() {
         {addingProject && (
           <NewItemForm
             placeholder="Project name…"
-            defaultColor="#6366f1"
+            defaultColor={PROJECT_COLORS[orderedProjects.length % PROJECT_COLORS.length]}
             onSave={(name, color) => { createProject.mutate({ name, color }); setAddingProject(false); }}
             onCancel={() => setAddingProject(false)}
           />
@@ -277,8 +370,8 @@ export function Sidebar() {
 
       {hasArchivedProjects && (
         <button
-          className="text-xs mb-4 px-1 py-0.5"
-          style={{ color: 'var(--text-muted)', opacity: 0.6 }}
+          className="btn-ghost text-xs mb-4"
+          style={{ padding: '2px 6px', opacity: 0.6 }}
           onClick={() => setShowArchived((v) => !v)}
         >
           {showArchived ? 'Hide archived' : 'Show archived'}
@@ -286,28 +379,19 @@ export function Sidebar() {
       )}
 
       {/* ── People ── */}
-      <div className="flex items-center justify-between mb-2 mt-2">
-        <h2 className="text-sm font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+      <div className="flex items-center justify-between mb-1.5 mt-3">
+        <span className="text-xs font-semibold tracking-wider uppercase" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>
           People
-        </h2>
-        <button
-          onClick={() => setAddingPerson(true)}
-          className="text-xs px-1.5 py-0.5 rounded"
-          style={{ color: 'var(--text-muted)', border: '1px solid var(--border)' }}
-          title="New person"
-        >
+        </span>
+        <button onClick={() => setAddingPerson(true)} className="btn-icon" style={{ width: 20, height: 20, fontSize: '1rem' }} title="New person">
           +
         </button>
       </div>
 
       <button
         onClick={showAllPeople}
-        className="text-xs mb-2 px-2 py-1 rounded"
-        style={{
-          backgroundColor: visiblePersonIds === null ? 'var(--accent)' : 'transparent',
-          color: visiblePersonIds === null ? '#fff' : 'var(--text-muted)',
-          border: '1px solid var(--border)',
-        }}
+        className={`btn-ghost text-xs mb-2 ${visiblePersonIds === null ? 'active' : ''}`}
+        style={{ padding: '2px 8px', borderRadius: 999 }}
       >
         Show All
       </button>
@@ -328,24 +412,23 @@ export function Sidebar() {
               style={{ borderTop: isOver ? '2px solid var(--accent)' : '2px solid transparent' }}
             >
               <div
-                className="group flex items-center gap-2 text-sm py-1 px-1 rounded"
-                style={{ opacity: checked ? 1 : 0.45 }}
+                className="group flex items-center gap-2 py-1 px-2 rounded-md"
+                style={{
+                  opacity: checked ? 1 : 0.4,
+                  transition: 'background-color 0.1s',
+                }}
+                onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = 'rgba(128,128,128,0.08)'; }}
+                onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = 'transparent'; }}
               >
                 {/* Color swatch + avatar */}
-                <label title="Change color" style={{ position: 'relative', flexShrink: 0, cursor: 'pointer' }}>
+                <ColorPickerPopover color={p.color} shape="circle" onChange={(c) => updatePerson.mutate({ id: p.id, data: { color: c } })}>
                   <span
-                    className="w-6 h-6 rounded-full flex items-center justify-center text-xs text-white font-medium"
-                    style={{ backgroundColor: p.color }}
+                    className="w-5 h-5 rounded-full flex items-center justify-center text-white font-semibold flex-shrink-0"
+                    style={{ backgroundColor: p.color, fontSize: 9 }}
                   >
                     {p.avatar_initials}
                   </span>
-                  <input
-                    type="color"
-                    defaultValue={p.color}
-                    onChange={(e) => updatePerson.mutate({ id: p.id, data: { color: e.target.value } })}
-                    style={{ position: 'absolute', inset: 0, opacity: 0, width: '100%', height: '100%', cursor: 'pointer', padding: 0, border: 'none' }}
-                  />
-                </label>
+                </ColorPickerPopover>
                 <input
                   type="checkbox"
                   checked={checked}
@@ -362,7 +445,7 @@ export function Sidebar() {
                   />
                 ) : (
                   <span
-                    className="truncate flex-1 cursor-pointer"
+                    className="truncate flex-1 cursor-pointer text-xs"
                     style={{ color: 'var(--text-primary)' }}
                     onClick={() => togglePersonVisibility(p.id)}
                     onDoubleClick={() => setRenamingPersonId(p.id)}
@@ -374,18 +457,15 @@ export function Sidebar() {
                 {/* Delete button — visible on hover */}
                 {!isRenaming && (
                   <button
-                    className="opacity-0 group-hover:opacity-60 hover:!opacity-100 text-xs flex-shrink-0"
-                    style={{ color: '#ef4444' }}
+                    className="opacity-0 group-hover:opacity-60 hover:!opacity-100 btn-icon flex-shrink-0"
+                    style={{ width: 16, height: 16, fontSize: '0.85rem', color: 'var(--urgent)' }}
                     title="Delete person"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      deletePerson.mutate(p.id);
-                    }}
+                    onClick={(e) => { e.stopPropagation(); deletePerson.mutate(p.id); }}
                   >
                     ×
                   </button>
                 )}
-                <span className="ml-auto text-xs opacity-0 group-hover:opacity-40" style={{ color: 'var(--text-muted)', cursor: 'grab' }}>⠿</span>
+                <span className="opacity-0 group-hover:opacity-35 flex-shrink-0" style={{ fontSize: 9, color: 'var(--text-muted)', cursor: 'grab' }}>⠿</span>
               </div>
             </li>
           );
@@ -393,7 +473,7 @@ export function Sidebar() {
         {addingPerson && (
           <NewItemForm
             placeholder="Person name…"
-            defaultColor="#8b5cf6"
+            defaultColor={PROJECT_COLORS[0]}
             onSave={(name, color) => {
               const initials = name.split(' ').map((w) => w[0]).join('').toUpperCase().slice(0, 2);
               createPerson.mutate({ name, color, avatar_initials: initials });
