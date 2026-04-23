@@ -1,4 +1,4 @@
-import { useRef, useMemo, useEffect, type RefObject, type MouseEvent as ReactMouseEvent } from 'react';
+import React, { useRef, useMemo, useEffect, type RefObject, type MouseEvent as ReactMouseEvent } from 'react';
 import type { Task, Project } from '../../lib/api';
 import { useUIStore } from '../../store/uiStore';
 
@@ -156,9 +156,16 @@ export function BacklogTray({
 }: BacklogTrayProps) {
   const { trayOpen, toggleTray, trayWidth, setTrayWidth } = useUIStore();
   const trayScrollRef = useRef<HTMLDivElement>(null);
+  const outerRef = useRef<HTMLDivElement>(null);
   const resizeDrag = useRef<{ startX: number; startWidth: number } | null>(null);
 
-  // ── Scroll sync with Gantt ───────────────────────────────────────────────
+  // Callback ref that writes to both outerRef and the optional containerRef prop
+  const setOuterRef = (el: HTMLDivElement | null) => {
+    (outerRef as React.MutableRefObject<HTMLDivElement | null>).current = el;
+    if (containerRef) (containerRef as React.MutableRefObject<HTMLDivElement | null>).current = el;
+  };
+
+  // ── Scroll sync: Gantt → Tray ────────────────────────────────────────────
   useEffect(() => {
     const gantt = ganttScrollRef.current;
     if (!gantt) return;
@@ -169,6 +176,21 @@ export function BacklogTray({
     };
     gantt.addEventListener('scroll', onScroll, { passive: true });
     return () => gantt.removeEventListener('scroll', onScroll);
+  }, [ganttScrollRef]);
+
+  // ── Wheel forwarding: Tray → Gantt ───────────────────────────────────────
+  // Attach to the outer container so the header area is also covered.
+  useEffect(() => {
+    const el = outerRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      const gantt = ganttScrollRef.current;
+      if (!gantt) return;
+      gantt.scrollTop += e.deltaY;
+      gantt.scrollLeft += e.deltaX;
+    };
+    el.addEventListener('wheel', onWheel, { passive: true });
+    return () => el.removeEventListener('wheel', onWheel);
   }, [ganttScrollRef]);
 
   // ── Tray resize ──────────────────────────────────────────────────────────
@@ -270,7 +292,7 @@ export function BacklogTray({
   if (!trayOpen) {
     return (
       <div
-        ref={containerRef}
+        ref={setOuterRef}
         style={{
           width: 24,
           flexShrink: 0,
@@ -313,7 +335,7 @@ export function BacklogTray({
   // ── Expanded tray ────────────────────────────────────────────────────────
   return (
     <div
-      ref={containerRef}
+      ref={setOuterRef}
       style={{
         width: trayWidth,
         flexShrink: 0,
