@@ -48,6 +48,8 @@ export interface Task {
   created_at: string;
   updated_at: string;
   dependencies: TaskDependency[];
+  created_by: string | null;
+  last_edited_by: string | null;
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {

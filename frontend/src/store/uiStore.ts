@@ -34,6 +34,12 @@ interface UIState {
   setLaneHeight: (laneId: string, height: number) => void;
   detailPanelWidth: number;
   setDetailPanelWidth: (w: number) => void;
+  backlogOrder: Record<string, number[]>;
+  setBacklogLaneOrder: (laneId: string, order: number[]) => void;
+  backlogPositions: Record<number, { x: number; y: number }>;
+  setBacklogPosition: (taskId: number, pos: { x: number; y: number }) => void;
+  clearBacklogPositions: () => void;
+  setAllBacklogPositions: (positions: Record<number, { x: number; y: number }>) => void;
 }
 
 export const useUIStore = create<UIState>()(
@@ -108,6 +114,16 @@ export const useUIStore = create<UIState>()(
 
       detailPanelWidth: 360,
       setDetailPanelWidth: (w) => set({ detailPanelWidth: Math.max(240, Math.min(700, w)) }),
+
+      backlogOrder: {},
+      setBacklogLaneOrder: (laneId, order) =>
+        set((s) => ({ backlogOrder: { ...s.backlogOrder, [laneId]: order } })),
+
+      backlogPositions: {},
+      setBacklogPosition: (taskId, pos) =>
+        set((s) => ({ backlogPositions: { ...s.backlogPositions, [taskId]: pos } })),
+      clearBacklogPositions: () => set({ backlogPositions: {} }),
+      setAllBacklogPositions: (positions) => set({ backlogPositions: positions }),
     }),
     {
       name: 'personal-os-ui',
@@ -128,6 +144,8 @@ export const useUIStore = create<UIState>()(
         detailPanelWidth: s.detailPanelWidth,
         trayOpen: s.trayOpen,
         trayWidth: s.trayWidth,
+        backlogOrder: s.backlogOrder,
+        backlogPositions: s.backlogPositions,
       }),
       merge: (persisted: unknown, current: UIState): UIState => {
         const p = persisted as Partial<{
@@ -145,6 +163,8 @@ export const useUIStore = create<UIState>()(
           detailPanelWidth: number;
           trayOpen: boolean;
           trayWidth: number;
+          backlogOrder: Record<string, number[]>;
+          backlogPositions: Record<number, { x: number; y: number }>;
         }>;
         return {
           ...current,
@@ -162,6 +182,8 @@ export const useUIStore = create<UIState>()(
           detailPanelWidth: p.detailPanelWidth ?? 360,
           ...(p.trayOpen !== undefined && { trayOpen: p.trayOpen }),
           trayWidth: p.trayWidth ?? 250,
+          backlogOrder: p.backlogOrder ?? {},
+          backlogPositions: p.backlogPositions ?? {},
         };
       },
     }

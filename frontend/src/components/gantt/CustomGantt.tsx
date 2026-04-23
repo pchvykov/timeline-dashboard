@@ -7,7 +7,7 @@ import {
   useState,
   Fragment,
 } from 'react';
-import { BacklogTray, CARD_WIDTH as TRAY_CARD_WIDTH } from './BacklogTray';
+import { BacklogTray, CARD_WIDTH as TRAY_CARD_WIDTH, CARD_COL_WIDTH as TRAY_CARD_COL_WIDTH, computeTopoPositions } from './BacklogTray';
 import type { TrayLane } from './BacklogTray';
 import { useQueryClient } from '@tanstack/react-query';
 import { TaskDetailModal } from './TaskDetailModal';
@@ -462,6 +462,30 @@ export function CustomGantt({ tasks, projects, people, autoArrangeRef }: Props) 
 
   // ── Auto-Arrange: iterative row packer (v2 spec) ────────────────────────
   const handleAutoArrange = useCallback(async () => {
+    // ── Arrange backlog tasks (topo layout → stored pixel positions) ─────────
+    // Runs unconditionally so the tray is always arranged even when no
+    // timeline tasks move (and so it's not blocked by the early-return below).
+    const newBacklogPositions: Record<number, { x: number; y: number }> = {};
+    trayLanes.forEach((lane) => {
+      let laneTasks: Task[];
+      if (lane.personId != null) {
+        laneTasks = backlogTasks.filter((t) => t.assignee_id === lane.personId);
+      } else if (lane.id === 'unassigned') {
+        laneTasks = backlogTasks.filter((t) => !t.assignee_id);
+      } else {
+        laneTasks = [];
+      }
+      const positions = computeTopoPositions(laneTasks);
+      for (const [taskId, pos] of positions.entries()) {
+        newBacklogPositions[taskId] = {
+          x: pos.col * TRAY_CARD_COL_WIDTH + 4,
+          y: pos.row * TASK_ROW_HEIGHT + 4,
+        };
+      }
+    });
+    useUIStore.getState().setAllBacklogPositions(newBacklogPositions);
+
+    // ── Arrange timeline tasks ────────────────────────────────────────────────
     const updates: { id: number; oldLaneY: number; newLaneY: number }[] = [];
     const preview = new Map<number, number>();
 
@@ -492,9 +516,8 @@ export function CustomGantt({ tasks, projects, people, autoArrangeRef }: Props) 
     });
 
     await invalidate();
-    // Clear preview after the refetch has landed (animation is 400ms; 1200ms is safe headroom)
     previewClearTimer.current = setTimeout(() => setPreviewLaneY(null), 1200);
-  }, [lanes, tasks, qc]);
+  }, [lanes, tasks, trayLanes, backlogTasks, qc]);
 
   useEffect(() => {
     if (autoArrangeRef) autoArrangeRef.current = handleAutoArrange;
@@ -658,6 +681,13 @@ export function CustomGantt({ tasks, projects, people, autoArrangeRef }: Props) 
         originalAssigneeId: task.assignee_id,
         originalLaneKey: 'backlog',
       };
+      // Capture co-selected backlog tasks for batch assignment on drop
+      const currentSelection = selectedTaskIdsRef.current;
+      if (currentSelection.has(taskId) && currentSelection.size > 1) {
+        dragState.current.coTaskSnapshots = [...currentSelection]
+          .filter((id) => id !== taskId)
+          .map((id) => ({ taskId: id, originalStart: today, originalEnd: addDays(today, 1), originalLaneY: -1 }));
+      }
     },
     [tasks],
   );
@@ -768,6 +798,17 @@ export function CustomGantt({ tasks, projects, people, autoArrangeRef }: Props) 
       }
 
       if (!dragState.current || !scrollRef.current) return;
+
+      // Safety net: if mouse button released but mouseup was missed (e.g. listener
+      // briefly re-registered while deps changed), clear orphaned drag state now.
+      if (e.buttons === 0) {
+        dragState.current = null;
+        setDragOverlays([]);
+        setConnectLine(null);
+        setTrayDropHighlightLane(null);
+        return;
+      }
+
       const ds = dragState.current;
       const dx = e.clientX - ds.startMouseX;
 
@@ -802,9 +843,25 @@ export function CustomGantt({ tasks, projects, people, autoArrangeRef }: Props) 
             ? scrollRect.top - scrollRef.current.scrollTop + (laneTopMap[snap.lane.id] ?? 0) + snap.row * TASK_ROW_HEIGHT + 4
             : e.clientY - TASK_HEIGHT / 2;
           setDragOverlays([{ taskId: ds.taskId, x, y: snappedY, width: Math.max(pxPerDay * 3, 24), color }]);
+          setTrayDropHighlightLane(null);
         } else {
           // Card-sized ghost following cursor (in tray or anywhere else)
           setDragOverlays([{ taskId: ds.taskId, x: e.clientX - TRAY_CARD_WIDTH / 2, y: e.clientY - TASK_HEIGHT / 2, width: TRAY_CARD_WIDTH, color }]);
+          // Highlight which tray lane the cursor is over
+          const trayRect = trayContainerRef.current?.getBoundingClientRect();
+          if (trayRect && e.clientX >= trayRect.left && e.clientX <= trayRect.right) {
+            const scrollTop = scrollRef.current.scrollTop;
+            const relY = e.clientY - trayRect.top + scrollTop;
+            let hlLane: string | null = null;
+            for (const lane of lanes) {
+              const top = laneTopMap[lane.id] ?? 0;
+              const h = laneHeightMap[lane.id] ?? DEFAULT_LANE_HEIGHT;
+              if (relY >= top && relY < top + h) { hlLane = lane.id; break; }
+            }
+            setTrayDropHighlightLane(hlLane);
+          } else {
+            setTrayDropHighlightLane(null);
+          }
         }
         return;
       }
@@ -971,11 +1028,58 @@ export function CustomGantt({ tasks, projects, people, autoArrangeRef }: Props) 
       // ── Drop from-backlog onto timeline ──────────────────────────────────
       if (ds.type === 'from-backlog') {
         dragState.current = null;
+
+        // Click (no significant drag) — select the task
+        const dy = e.clientY - ds.startMouseY;
+        if (dx * dx + dy * dy < 25) {
+          setSelectedTaskIds((prev) => {
+            if (e.shiftKey) {
+              const next = new Set(prev);
+              if (next.has(ds.taskId)) next.delete(ds.taskId); else next.add(ds.taskId);
+              return next;
+            }
+            if (prev.has(ds.taskId) && prev.size > 1) return prev;
+            return new Set([ds.taskId]);
+          });
+          return;
+        }
+
         if (!scrollRef.current) return;
         const scrollRect = scrollRef.current.getBoundingClientRect();
         const isOverGantt = e.clientX >= scrollRect.left && e.clientX <= scrollRect.right
           && e.clientY >= scrollRect.top && e.clientY <= scrollRect.bottom;
-        if (!isOverGantt) return;
+        if (!isOverGantt) {
+          // Check for cross-lane drop within the backlog tray
+          const trayRect = trayContainerRef.current?.getBoundingClientRect();
+          if (trayRect && e.clientX >= trayRect.left && e.clientX <= trayRect.right
+              && e.clientY >= trayRect.top && e.clientY <= trayRect.bottom) {
+            const scrollTop = scrollRef.current.scrollTop;
+            const mouseYInContent = e.clientY - trayRect.top + scrollTop;
+            let dropLane: Lane | null = null;
+            for (const lane of lanes) {
+              const top = laneTopMap[lane.id] ?? 0;
+              const h = laneHeightMap[lane.id] ?? DEFAULT_LANE_HEIGHT;
+              if (mouseYInContent >= top && mouseYInContent < top + h) { dropLane = lane; break; }
+            }
+            if (dropLane && dropLane.personId !== undefined) {
+              const newPersonId = dropLane.personId ?? null;
+              const task = tasks.find((t) => t.id === ds.taskId);
+              if ((task?.assignee_id ?? null) !== newPersonId) {
+                updateTask.mutate({ id: ds.taskId, data: { assignee_id: newPersonId } });
+              }
+              // Update co-selected tasks to the same lane
+              if (ds.coTaskSnapshots && ds.coTaskSnapshots.length > 0) {
+                for (const s of ds.coTaskSnapshots) {
+                  const ct = tasks.find((t) => t.id === s.taskId);
+                  if (ct && (ct.assignee_id ?? null) !== newPersonId) {
+                    updateTask.mutate({ id: s.taskId, data: { assignee_id: newPersonId }, skipUndo: true });
+                  }
+                }
+              }
+            }
+          }
+          return;
+        }
 
         const mouseXInScroll = e.clientX - scrollRect.left + scrollRef.current.scrollLeft;
         const mouseYInScroll = e.clientY - scrollRect.top + scrollRef.current.scrollTop;
@@ -993,7 +1097,7 @@ export function CustomGantt({ tasks, projects, people, autoArrangeRef }: Props) 
         return;
       }
 
-      // ── Drop move onto backlog tray (clear dates) ─────────────────────────
+      // ── Drop move onto backlog tray (clear dates, update assignment) ────────
       if (ds.type === 'move') {
         const trayRect = trayContainerRef.current?.getBoundingClientRect();
         const isOverTray = trayRect
@@ -1001,7 +1105,20 @@ export function CustomGantt({ tasks, projects, people, autoArrangeRef }: Props) 
           && e.clientY >= trayRect.top && e.clientY <= trayRect.bottom;
         if (isOverTray) {
           dragState.current = null;
-          updateTask.mutate({ id: ds.taskId, data: { start_date: null, end_date: null, deadline: null, lane_y: -1 } });
+          const scrollTop = scrollRef.current?.scrollTop ?? 0;
+          const mouseYInContent = e.clientY - trayRect.top + scrollTop;
+          let trayDropLane: Lane | null = null;
+          for (const lane of lanes) {
+            const top = laneTopMap[lane.id] ?? 0;
+            const h = laneHeightMap[lane.id] ?? DEFAULT_LANE_HEIGHT;
+            if (mouseYInContent >= top && mouseYInContent < top + h) { trayDropLane = lane; break; }
+          }
+          const upd: Partial<Task> = { start_date: null, end_date: null, deadline: null, lane_y: -1 };
+          if (trayDropLane && trayDropLane.personId !== undefined) {
+            const newPersonId = trayDropLane.personId ?? null;
+            if ((ds.originalAssigneeId ?? null) !== newPersonId) upd.assignee_id = newPersonId;
+          }
+          updateTask.mutate({ id: ds.taskId, data: upd });
           return;
         }
       }
@@ -1190,7 +1307,7 @@ export function CustomGantt({ tasks, projects, people, autoArrangeRef }: Props) 
 
       dragState.current = null;
     },
-    [pxPerDay, addDependency, moveTask, updateTask, getNearestSnapRow, tasks, taskRectMap, dragOverLaneId, lanes, setPersonOrder, qc, laneTopMap, viewStart]
+    [pxPerDay, addDependency, moveTask, updateTask, getNearestSnapRow, tasks, taskRectMap, dragOverLaneId, lanes, setPersonOrder, qc, laneTopMap, laneHeightMap, viewStart]
   );
 
   // Register global mouse events
@@ -1348,6 +1465,15 @@ export function CustomGantt({ tasks, projects, people, autoArrangeRef }: Props) 
           dropHighlightLaneId={trayDropHighlightLane}
           containerRef={trayContainerRef}
           onTooltip={setTooltip}
+          selectedTaskIds={selectedTaskIds}
+          onRubberBandSelect={(ids, additive) =>
+            setSelectedTaskIds((prev) => {
+              if (!additive) return ids;
+              const next = new Set(prev);
+              ids.forEach((id) => next.add(id));
+              return next;
+            })
+          }
         />
 
         {/* Lane labels (left sidebar, Y-sync'd via ref) */}

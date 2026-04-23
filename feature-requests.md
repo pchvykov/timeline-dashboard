@@ -11,8 +11,8 @@ Start implementing *from the bottom*; cross out ones that are complete
 
 1. Think how to manage 'backlog' or 'optional' tasks
 2. Set up system for how to deal with missed tasks; how to deal with flexible-timeline tasks vs hard-timeline. Auto-reprioritize system
-3. Some automation on vertical alignment? Perhaps group by project, or horizontally align by 'kind' or vertically. Or at least remove blank space from top of lane...?
-4. Lane resize conflicts with task selection box - so when I try to resize swim lane, it doesn't work correctly. 
+3. ~~Some automation on vertical alignment? Perhaps group by project, or horizontally align by 'kind' or vertically. Or at least remove blank space from top of lane...?~~
+4. ~~Lane resize conflicts with task selection box - so when I try to resize swim lane, it doesn't work correctly.~~ 
 5. ~~Selection UI: click selects a task, allow dragging a box to selecet multiple tasks at once to then drag them around. So to edit task now need double-click, not just click.~~
 6. ~~New task should be placed exactly where it was clicked - currently created at that date, but below all the other tasks (wrong swim-lane). Also change task creation to be with double-clikc, not single click.~~
 7. ~~UI still jumpy - clean up, make more smooth. E.g., ghost task jumps when first click and hold, then aligns when start to drag. Same for resize.~~

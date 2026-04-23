@@ -149,6 +149,8 @@ def _task_to_snapshot(task: Task) -> str:
     })
 
 
+_COSMETIC_FIELDS = frozenset({"lane_y"})
+
 @event.listens_for(Session, "before_flush")
 def before_flush_snapshot(session, flush_context, instances):
     """Record task history before any modification."""
@@ -158,13 +160,18 @@ def before_flush_snapshot(session, flush_context, instances):
             if state.committed_state:
                 # Build snapshot from committed (pre-change) values
                 committed = {}
+                changed_keys = set()
                 for attr in state.attrs:
                     key = attr.key
                     history = attr.history
                     if history.deleted:
                         committed[key] = history.deleted[0]
+                        changed_keys.add(key)
                     elif history.unchanged:
                         committed[key] = history.unchanged[0]
+                # Use "reorder" change_type when only cosmetic fields changed so
+                # last_edited_by ignores pure visual repositioning.
+                only_cosmetic = bool(changed_keys) and changed_keys.issubset(_COSMETIC_FIELDS)
                 snapshot = json.dumps({k: v for k, v in committed.items()
                                        if k not in ("project", "assignee", "parent_task",
                                                      "subtasks", "history", "dependencies",
@@ -172,7 +179,7 @@ def before_flush_snapshot(session, flush_context, instances):
                 session.add(TaskHistory(
                     task_id=obj.id,
                     changed_by="user",
-                    change_type="update",
+                    change_type="reorder" if only_cosmetic else "update",
                     snapshot=snapshot,
                 ))
 

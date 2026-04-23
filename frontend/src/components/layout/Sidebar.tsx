@@ -192,6 +192,8 @@ export function Sidebar() {
     visiblePersonIds, togglePersonVisibility, showAllPeople,
     personOrder, setPersonOrder,
     projectOrder, setProjectOrder,
+    createdByFilter, setCreatedByFilter,
+    lastEditedByFilter, setLastEditedByFilter,
   } = useUIStore();
 
   // ── Project drag-to-reorder ────────────────────────────────────────────────
@@ -483,6 +485,32 @@ export function Sidebar() {
           />
         )}
       </ul>
+
+      {/* ── Source filters ── */}
+      <div className="mt-4 space-y-2">
+        {([
+          { label: 'Created by', value: createdByFilter, set: setCreatedByFilter },
+          { label: 'Last edited by', value: lastEditedByFilter, set: setLastEditedByFilter },
+        ] as const).map(({ label, value, set }) => (
+          <div key={label}>
+            <span className="text-xs font-semibold tracking-wider uppercase block mb-1" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>
+              {label}
+            </span>
+            <div className="flex gap-1">
+              {(['all', 'human', 'agent'] as const).map((opt) => (
+                <button
+                  key={opt}
+                  onClick={() => set(opt)}
+                  className={`btn-ghost text-xs flex-1 ${value === opt ? 'active' : ''}`}
+                  style={{ padding: '2px 4px', borderRadius: 999, textTransform: 'capitalize', justifyContent: 'center' }}
+                >
+                  {opt}
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
     </aside>
   );
 }

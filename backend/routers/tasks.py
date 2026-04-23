@@ -37,7 +37,31 @@ def list_tasks(
         q = q.filter(Task.type == type)
     if updated_since is not None:
         q = q.filter(Task.updated_at > updated_since)
-    return q.order_by(Task.start_date, Task.deadline).all()
+    tasks = q.order_by(Task.start_date, Task.deadline).all()
+
+    # Enrich with created_by (earliest history record) and last_edited_by (latest
+    # substantive edit — "reorder" records from visual repositioning are excluded).
+    if tasks:
+        task_ids = [t.id for t in tasks]
+        history_rows = (
+            db.query(TaskHistory.task_id, TaskHistory.changed_by,
+                     TaskHistory.changed_at, TaskHistory.change_type)
+            .filter(TaskHistory.task_id.in_(task_ids))
+            .order_by(TaskHistory.task_id, TaskHistory.changed_at)
+            .all()
+        )
+        created_by_map: dict[int, str] = {}
+        last_edited_by_map: dict[int, str] = {}
+        for row in history_rows:
+            if row.task_id not in created_by_map:
+                created_by_map[row.task_id] = row.changed_by
+            if row.change_type != "reorder":
+                last_edited_by_map[row.task_id] = row.changed_by
+        for t in tasks:
+            t.created_by = created_by_map.get(t.id)
+            t.last_edited_by = last_edited_by_map.get(t.id)
+
+    return tasks
 
 
 @router.get("/{task_id}", response_model=TaskOut)

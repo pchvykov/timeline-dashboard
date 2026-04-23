@@ -1,10 +1,10 @@
-import React, { useRef, useMemo, useEffect, type RefObject, type MouseEvent as ReactMouseEvent } from 'react';
+import React, { useRef, useMemo, useEffect, useState, type RefObject, type MouseEvent as ReactMouseEvent } from 'react';
 import type { Task, Project } from '../../lib/api';
 import { useUIStore } from '../../store/uiStore';
 
 // ── Constants (mirrors CustomGantt) ─────────────────────────────────────────
 export const CARD_WIDTH = 52;
-const CARD_COL_WIDTH = 60;    // card + gap
+export const CARD_COL_WIDTH = 72;    // card + gap (20px gap)
 const TASK_HEIGHT = 28;
 const TASK_ROW_HEIGHT = 36;
 const DATE_HEADER_HEIGHT = 64;
@@ -36,6 +36,10 @@ export interface BacklogTrayProps {
   containerRef?: RefObject<HTMLDivElement | null>;
   /** Mirror the Gantt tooltip — called on card hover */
   onTooltip?: (tip: { text: string; x: number; y: number } | null) => void;
+  /** Currently selected task IDs (shared with timeline) */
+  selectedTaskIds?: Set<number>;
+  /** Called when rubber-band selection completes inside the tray */
+  onRubberBandSelect?: (ids: Set<number>, additive: boolean) => void;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -45,8 +49,9 @@ function projectColor(projectId: number | null, projects: Project[]): string {
 }
 
 /** Compute topological depth + row for each task based on dependency graph. */
-function computeTopoPositions(
+export function computeTopoPositions(
   tasks: Task[],
+  manualOrder: number[] = [],
 ): Map<number, { col: number; row: number }> {
   if (tasks.length === 0) return new Map();
 
@@ -92,10 +97,20 @@ function computeTopoPositions(
   const zoneScore = (t: Task) =>
     2 * ((t.priority ?? 2) / 5) + 2 * ((t.density ?? 50) / 100);
 
+  const orderIndex = (id: number) => {
+    const i = manualOrder.indexOf(id);
+    return i === -1 ? Infinity : i;
+  };
+
   const positions = new Map<number, { col: number; row: number }>();
   for (const [col, colTasks] of Array.from(byDepth.entries())) {
     colTasks
-      .sort((a, b) => zoneScore(a) - zoneScore(b) || a.id - b.id)
+      .sort((a, b) => {
+        const ai = orderIndex(a.id), bi = orderIndex(b.id);
+        if (ai !== Infinity || bi !== Infinity)
+          return (ai === Infinity ? 1e9 : ai) - (bi === Infinity ? 1e9 : bi);
+        return zoneScore(a) - zoneScore(b) || a.id - b.id;
+      })
       .forEach((task, row) => {
         positions.set(task.id, { col, row });
       });
@@ -153,11 +168,30 @@ export function BacklogTray({
   dropHighlightLaneId = null,
   containerRef,
   onTooltip,
+  selectedTaskIds = new Set<number>(),
+  onRubberBandSelect,
 }: BacklogTrayProps) {
-  const { trayOpen, toggleTray, trayWidth, setTrayWidth } = useUIStore();
+  const { trayOpen, toggleTray, trayWidth, setTrayWidth, backlogOrder, backlogPositions } = useUIStore();
   const trayScrollRef = useRef<HTMLDivElement>(null);
   const outerRef = useRef<HTMLDivElement>(null);
   const resizeDrag = useRef<{ startX: number; startWidth: number } | null>(null);
+  const intraDragRef = useRef<{ taskId: number; laneId: string; startX: number; startY: number } | null>(null);
+  // Rubber-band selection within tray
+  const traySelectRef = useRef<{ startClientX: number; startClientY: number } | null>(null);
+  const [traySelectBox, setTraySelectBox] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  const onRubberBandSelectRef = useRef(onRubberBandSelect);
+  onRubberBandSelectRef.current = onRubberBandSelect;
+  // Live refs so event handlers always see latest values without stale closures
+  const laneTasksMapRef = useRef<Map<string, Task[]>>(new Map());
+  const laneTopMapRef = useRef(laneTopMap);
+  const laneHeightMapRef = useRef(laneHeightMap);
+  const lanesRef = useRef(lanes);
+  const cardRectMapRef = useRef<Map<number, { x: number; y: number; w: number; h: number }>>(new Map());
+  const selectedTaskIdsRef = useRef(selectedTaskIds);
+  laneTopMapRef.current = laneTopMap;
+  laneHeightMapRef.current = laneHeightMap;
+  lanesRef.current = lanes;
+  selectedTaskIdsRef.current = selectedTaskIds;
 
   // Callback ref that writes to both outerRef and the optional containerRef prop
   const setOuterRef = (el: HTMLDivElement | null) => {
@@ -230,10 +264,10 @@ export function BacklogTray({
   const topoLayoutMap = useMemo(() => {
     const map = new Map<string, Map<number, { col: number; row: number }>>();
     for (const [laneId, laneTasks] of Array.from(laneTasksMap.entries())) {
-      map.set(laneId, computeTopoPositions(laneTasks));
+      map.set(laneId, computeTopoPositions(laneTasks, backlogOrder[laneId] ?? []));
     }
     return map;
-  }, [laneTasksMap]);
+  }, [laneTasksMap, backlogOrder]);
 
   // ── Card rect map (coords within tray scroll content, y starts at 0) ───────
   // laneTopMap uses DATE_HEADER_HEIGHT offset (matches Gantt); we subtract it
@@ -245,18 +279,127 @@ export function BacklogTray({
       const laneTasks = laneTasksMap.get(lane.id) ?? [];
       const positions = topoLayoutMap.get(lane.id) ?? new Map();
       for (const task of laneTasks) {
-        const pos = positions.get(task.id);
-        if (!pos) continue;
-        map.set(task.id, {
-          x: pos.col * CARD_COL_WIDTH + 4,
-          y: laneTop + pos.row * TASK_ROW_HEIGHT + 4,
-          w: CARD_WIDTH,
-          h: TASK_HEIGHT,
-        });
+        const stored = backlogPositions[task.id];
+        if (stored) {
+          map.set(task.id, { x: stored.x, y: laneTop + stored.y, w: CARD_WIDTH, h: TASK_HEIGHT });
+        } else {
+          const pos = positions.get(task.id);
+          if (!pos) continue;
+          map.set(task.id, {
+            x: pos.col * CARD_COL_WIDTH + 4,
+            y: laneTop + pos.row * TASK_ROW_HEIGHT + 4,
+            w: CARD_WIDTH,
+            h: TASK_HEIGHT,
+          });
+        }
       }
     }
     return map;
-  }, [lanes, laneTopMap, laneTasksMap, topoLayoutMap]);
+  }, [lanes, laneTopMap, laneTasksMap, topoLayoutMap, backlogPositions]);
+
+  // Keep live refs up to date
+  laneTasksMapRef.current = laneTasksMap;
+  cardRectMapRef.current = cardRectMap;
+
+  // ── Intra-tray drag (freeform reposition) + rubber-band selection ────────
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      // Rubber-band tracking
+      if (traySelectRef.current && !intraDragRef.current) {
+        const { startClientX, startClientY } = traySelectRef.current;
+        setTraySelectBox({
+          x: Math.min(startClientX, e.clientX),
+          y: Math.min(startClientY, e.clientY),
+          w: Math.abs(e.clientX - startClientX),
+          h: Math.abs(e.clientY - startClientY),
+        });
+      }
+    };
+
+    const onUp = (e: MouseEvent) => {
+      // ── Rubber-band selection end ──────────────────────────────────────
+      if (traySelectRef.current && !intraDragRef.current) {
+        const { startClientX, startClientY } = traySelectRef.current;
+        traySelectRef.current = null;
+        setTraySelectBox(null);
+
+        const x1 = Math.min(startClientX, e.clientX);
+        const y1 = Math.min(startClientY, e.clientY);
+        const x2 = Math.max(startClientX, e.clientX);
+        const y2 = Math.max(startClientY, e.clientY);
+        if (x2 - x1 > 5 && y2 - y1 > 5 && outerRef.current && trayScrollRef.current) {
+          const trayRect = outerRef.current.getBoundingClientRect();
+          const scrollTop = trayScrollRef.current.scrollTop;
+          // Convert screen box to tray-content coordinates (y relative to scroll content)
+          const cx1 = x1 - trayRect.left;
+          const cy1 = y1 - trayRect.top - DATE_HEADER_HEIGHT + scrollTop;
+          const cx2 = x2 - trayRect.left;
+          const cy2 = y2 - trayRect.top - DATE_HEADER_HEIGHT + scrollTop;
+          const hit = new Set<number>();
+          for (const [tid, rect] of cardRectMapRef.current.entries()) {
+            if (rect.x < cx2 && rect.x + rect.w > cx1 && rect.y < cy2 && rect.y + rect.h > cy1) {
+              hit.add(tid);
+            }
+          }
+          onRubberBandSelectRef.current?.(hit, e.shiftKey);
+        } else {
+          // Tiny drag = deselect
+          onRubberBandSelectRef.current?.(new Set(), false);
+        }
+        return;
+      }
+
+      // ── Card freeform reposition ───────────────────────────────────────
+      if (!intraDragRef.current) return;
+      const { taskId, startX, startY } = intraDragRef.current;
+      intraDragRef.current = null;
+
+      // Clicks (< 5px) are handled by CustomGantt's mouseup (selection logic there)
+      if (Math.hypot(e.clientX - startX, e.clientY - startY) < 5) return;
+
+      const trayRect = outerRef.current?.getBoundingClientRect();
+      if (!trayRect) return;
+      const isOverTray = e.clientX >= trayRect.left && e.clientX <= trayRect.right
+        && e.clientY >= trayRect.top && e.clientY <= trayRect.bottom;
+      if (!isOverTray) return;
+
+      const scrollTop = ganttScrollRef.current?.scrollTop ?? 0;
+      const mouseYInContent = e.clientY - trayRect.top + scrollTop;
+
+      let dropLaneId: string | null = null;
+      for (const lane of lanesRef.current) {
+        const top = laneTopMapRef.current[lane.id] ?? 0;
+        const h = laneHeightMapRef.current[lane.id] ?? DEFAULT_LANE_HEIGHT;
+        if (mouseYInContent >= top && mouseYInContent < top + h) { dropLaneId = lane.id; break; }
+      }
+      if (!dropLaneId) return;
+
+      const laneTop = laneTopMapRef.current[dropLaneId] ?? 0;
+      const laneHeight = laneHeightMapRef.current[dropLaneId] ?? DEFAULT_LANE_HEIGHT;
+      const { trayWidth: tw, setBacklogPosition } = useUIStore.getState();
+      const posX = Math.max(4, Math.min(e.clientX - trayRect.left - CARD_WIDTH / 2, tw - CARD_WIDTH - 8));
+      const posY = Math.max(4, Math.min(mouseYInContent - laneTop - TASK_HEIGHT / 2, laneHeight - TASK_HEIGHT - 4));
+      setBacklogPosition(taskId, { x: posX, y: posY });
+      // Reposition co-selected cards to the same drop lane, stacked below primary
+      const sel = selectedTaskIdsRef.current;
+      if (sel.has(taskId) && sel.size > 1) {
+        let offset = TASK_ROW_HEIGHT;
+        for (const coId of sel) {
+          if (coId === taskId) continue;
+          const coY = Math.max(4, Math.min(posY + offset, laneHeight - TASK_HEIGHT - 4));
+          setBacklogPosition(coId, { x: posX, y: coY });
+          offset += TASK_ROW_HEIGHT;
+        }
+      }
+    };
+
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, []); // uses refs — no deps needed
 
   // ── Dependency arrows ────────────────────────────────────────────────────
   const depArrows = useMemo(() => {
@@ -459,15 +602,23 @@ export function BacklogTray({
                   boxSizing: 'border-box',
                   borderTop: isDropTarget ? '2px solid var(--accent)' : '2px solid transparent',
                 }}
+                onMouseDown={(e) => {
+                  if (e.button !== 0) return;
+                  traySelectRef.current = { startClientX: e.clientX, startClientY: e.clientY };
+                }}
               >
                 {/* Task cards */}
                 {laneTasks.map((task) => {
+                  const stored = backlogPositions[task.id];
                   const pos = positions.get(task.id);
-                  if (!pos) return null;
+                  if (!stored && !pos) return null;
+                  const cardLeft = stored?.x ?? (pos!.col * CARD_COL_WIDTH + 4);
+                  const cardTop = stored?.y ?? (pos!.row * TASK_ROW_HEIGHT + 4);
 
                   const color = projectColor(task.project_id, projects);
                   const isHigh = task.priority === 3;
                   const isLow = task.priority === 1;
+                  const isSelected = selectedTaskIds.has(task.id);
                   const fillPct = Math.max(5, task.density ?? 100);
                   const barBg = color + '18';
                   const borderStyle = isLow ? 'dashed' : 'solid';
@@ -482,10 +633,14 @@ export function BacklogTray({
                       onMouseEnter={(e) => onTooltip?.({ text: task.title, x: e.clientX, y: e.clientY - 32 })}
                       onMouseMove={(e) => onTooltip?.({ text: task.title, x: e.clientX, y: e.clientY - 32 })}
                       onMouseLeave={() => onTooltip?.(null)}
+                      onDoubleClick={(e) => {
+                        e.stopPropagation();
+                        useUIStore.getState().setSelectedTaskId(task.id);
+                      }}
                       style={{
                         position: 'absolute',
-                        left: pos.col * CARD_COL_WIDTH + 4,
-                        top: pos.row * TASK_ROW_HEIGHT + 4,
+                        left: cardLeft,
+                        top: cardTop,
                         width: CARD_WIDTH,
                         height: TASK_HEIGHT,
                         backgroundColor: barBg,
@@ -493,13 +648,17 @@ export function BacklogTray({
                         borderRadius: 6,
                         cursor: 'grab',
                         userSelect: 'none',
-                        zIndex: 6,
+                        zIndex: isSelected ? 8 : 6,
                         overflow: 'hidden',
                         boxSizing: 'border-box',
                         boxShadow: priorityShadow,
+                        outline: isSelected ? '2px solid var(--accent)' : 'none',
+                        outlineOffset: '2px',
                       }}
                       onMouseDown={(e) => {
                         e.stopPropagation();
+                        traySelectRef.current = null; // cancel any rubber-band started on bg
+                        intraDragRef.current = { taskId: task.id, laneId: lane.id, startX: e.clientX, startY: e.clientY };
                         onBacklogDragStart(task.id, e);
                       }}
                     >
@@ -586,6 +745,23 @@ export function BacklogTray({
           })}
         </div>
       </div>
+
+      {/* Rubber-band selection overlay (fixed position, covers screen) */}
+      {traySelectBox && traySelectBox.w > 4 && traySelectBox.h > 4 && (
+        <div
+          style={{
+            position: 'fixed',
+            left: traySelectBox.x,
+            top: traySelectBox.y,
+            width: traySelectBox.w,
+            height: traySelectBox.h,
+            border: '1px solid var(--accent)',
+            backgroundColor: 'rgba(99,102,241,0.08)',
+            pointerEvents: 'none',
+            zIndex: 150,
+          }}
+        />
+      )}
 
       {/* Resize handle (right edge) */}
       <div

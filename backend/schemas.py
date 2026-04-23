@@ -126,4 +126,6 @@ class TaskOut(TaskBase):
     created_at: str
     updated_at: str
     dependencies: list[DependencyOut] = []
+    created_by: Optional[str] = None
+    last_edited_by: Optional[str] = None
     model_config = {"from_attributes": True}

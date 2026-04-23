@@ -10,7 +10,7 @@ function App() {
   const { data: tasks, isLoading: tasksLoading } = useTasks();
   const { data: projects } = useProjects();
   const { data: people } = usePeople();
-  const { sidebarOpen, visibleProjectIds, visiblePersonIds, darkMode } = useUIStore();
+  const { sidebarOpen, visibleProjectIds, visiblePersonIds, darkMode, createdByFilter, lastEditedByFilter } = useUIStore();
   const { undo, redo } = useUndoStore();
   const autoArrangeRef = useRef<(() => Promise<void>) | null>(null);
 
@@ -33,7 +33,7 @@ function App() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [undo, redo]);
 
-  // Filter tasks by visible projects and people.
+  // Filter tasks by visible projects, people, and source (human/agent).
   // Done tasks are never filtered out — they stay on the timeline with muted styling.
   const filteredTasks = useMemo(() => {
     if (!tasks) return [];
@@ -44,9 +44,16 @@ function App() {
       if (visiblePersonIds !== null) {
         if (t.assignee_id && !visiblePersonIds.has(t.assignee_id)) return false;
       }
+      // null created_by means pre-history (assumed human); null last_edited_by also treated as user
+      const createdBy = t.created_by ?? 'user';
+      const lastEditedBy = t.last_edited_by ?? 'user';
+      if (createdByFilter === 'human' && createdBy !== 'user') return false;
+      if (createdByFilter === 'agent' && createdBy !== 'agent') return false;
+      if (lastEditedByFilter === 'human' && lastEditedBy !== 'user') return false;
+      if (lastEditedByFilter === 'agent' && lastEditedBy !== 'agent') return false;
       return true;
     });
-  }, [tasks, visibleProjectIds, visiblePersonIds]);
+  }, [tasks, visibleProjectIds, visiblePersonIds, createdByFilter, lastEditedByFilter]);
 
   if (tasksLoading) {
     return (
