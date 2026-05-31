@@ -351,7 +351,7 @@ export function BacklogTray({
 
       // ── Card freeform reposition ───────────────────────────────────────
       if (!intraDragRef.current) return;
-      const { taskId, startX, startY } = intraDragRef.current;
+      const { taskId, startX, startY, laneId: startLaneId } = intraDragRef.current;
       intraDragRef.current = null;
 
       // Clicks (< 5px) are handled by CustomGantt's mouseup (selection logic there)
@@ -373,6 +373,12 @@ export function BacklogTray({
         if (mouseYInContent >= top && mouseYInContent < top + h) { dropLaneId = lane.id; break; }
       }
       if (!dropLaneId) return;
+
+      // If dropped on a different lane, it's a re-assignment drag. Let the Gantt
+      // component's handler manage it. This handler is for in-lane repositioning.
+      if (dropLaneId !== startLaneId) {
+        return;
+      }
 
       const laneTop = laneTopMapRef.current[dropLaneId] ?? 0;
       const laneHeight = laneHeightMapRef.current[dropLaneId] ?? DEFAULT_LANE_HEIGHT;

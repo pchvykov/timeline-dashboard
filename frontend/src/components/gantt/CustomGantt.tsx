@@ -1064,15 +1064,31 @@ export function CustomGantt({ tasks, projects, people, autoArrangeRef }: Props) 
             if (dropLane && dropLane.personId !== undefined) {
               const newPersonId = dropLane.personId ?? null;
               const task = tasks.find((t) => t.id === ds.taskId);
+
+              // 1. Update assignee in DB
               if ((task?.assignee_id ?? null) !== newPersonId) {
                 updateTask.mutate({ id: ds.taskId, data: { assignee_id: newPersonId } });
               }
-              // Update co-selected tasks to the same lane
-              if (ds.coTaskSnapshots && ds.coTaskSnapshots.length > 0) {
-                for (const s of ds.coTaskSnapshots) {
-                  const ct = tasks.find((t) => t.id === s.taskId);
-                  if (ct && (ct.assignee_id ?? null) !== newPersonId) {
-                    updateTask.mutate({ id: s.taskId, data: { assignee_id: newPersonId }, skipUndo: true });
+
+              // 2. Set visual position in the new lane
+              const trayRect = trayContainerRef.current?.getBoundingClientRect();
+              if (trayRect) {
+                const { setBacklogPosition } = useUIStore.getState();
+                const laneTop = laneTopMap[dropLane.id] ?? 0;
+                const x = e.clientX - trayRect.left - TRAY_CARD_WIDTH / 2;
+                const y = e.clientY - trayRect.top + scrollTop - laneTop;
+                setBacklogPosition(ds.taskId, { x, y });
+
+                // 3. Handle co-selected tasks
+                if (ds.coTaskSnapshots && ds.coTaskSnapshots.length > 0) {
+                  let offset = TASK_ROW_HEIGHT;
+                  for (const s of ds.coTaskSnapshots) {
+                    const coTask = tasks.find((t) => t.id === s.taskId);
+                    if (coTask && (coTask.assignee_id ?? null) !== newPersonId) {
+                      updateTask.mutate({ id: s.taskId, data: { assignee_id: newPersonId }, skipUndo: true });
+                    }
+                    setBacklogPosition(s.taskId, { x, y: y + offset });
+                    offset += TASK_ROW_HEIGHT;
                   }
                 }
               }
