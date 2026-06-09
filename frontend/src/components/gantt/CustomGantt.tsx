@@ -120,12 +120,6 @@ function xToDate(x: number, viewStart: Date, pxPerDay: number): Date {
   return addDays(viewStart, days);
 }
 
-function clampDate(date: Date, min: Date, max: Date): Date {
-  if (date < min) return min;
-  if (date > max) return max;
-  return date;
-}
-
 // ── Date header helpers ──────────────────────────────────────────────────────
 function buildMonthTicks(viewStart: Date, viewEnd: Date, pxPerDay: number) {
   const ticks: { label: string; x: number; width: number }[] = [];
@@ -291,7 +285,6 @@ export function CustomGantt({ tasks, projects, people, autoArrangeRef }: Props) 
   const [connectLine, setConnectLine] = useState<{
     sx: number; sy: number; ex: number; ey: number;
   } | null>(null);
-  const [hoveredDepId, setHoveredDepId] = useState<number | null>(null);
   const [dragOverLaneId, setDragOverLaneId] = useState<string | null>(null);
   const laneReorder = useRef<{ srcLaneId: string; startY: number } | null>(null);
   const [tooltip, setTooltip] = useState<{ text: string; x: number; y: number } | null>(null);
@@ -592,21 +585,6 @@ export function CustomGantt({ tasks, projects, people, autoArrangeRef }: Props) 
       didScrollToToday.current = true;
     }
   }, [todayX]);
-
-  // ── Determine lane from mouseY in the scrollable area ───────────────────
-  const getLaneFromY = useCallback(
-    (absoluteY: number): { lane: Lane | null; laneLocalY: number } => {
-      for (const lane of lanes) {
-        const top = laneTopMap[lane.id] ?? 0;
-        const height = laneHeightMap[lane.id] ?? DEFAULT_LANE_HEIGHT;
-        if (absoluteY >= top && absoluteY < top + height) {
-          return { lane, laneLocalY: absoluteY - top };
-        }
-      }
-      return { lane: null, laneLocalY: 0 };
-    },
-    [lanes, laneTopMap, laneHeightMap]
-  );
 
   // ── Find nearest valid snap row across ALL lanes ─────────────────────────
   // Avoids cursor-at-lane-boundary returning a row from the adjacent lane.

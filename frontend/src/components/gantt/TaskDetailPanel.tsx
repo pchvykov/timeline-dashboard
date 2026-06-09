@@ -185,7 +185,7 @@ export function TaskDetailPanel({ task, projects, people }: Props) {
     setChecklist((prev) => prev.map((item) => item.id === id ? { ...item, text } : item));
   }, []);
 
-  const commitItemText = useCallback((id: string) => {
+  const commitItemText = useCallback((_id: string) => {
     saveNotes(freeform, checklist);
   }, [freeform, checklist, saveNotes]);
 

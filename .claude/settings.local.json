@@ -1,0 +1,7 @@
+{
+  "disabledMcpjsonServers": [
+    "jina",
+    "apple-mcp",
+    "notion"
+  ]
+}
