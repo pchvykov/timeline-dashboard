@@ -8,3 +8,4 @@ __pycache__/
 backend/venv/
 .env
 backend/.env
+.claude/settings.local.json
