@@ -30,13 +30,13 @@ export interface Task {
   yaml_id: string | null;
   title: string;
   description: string | null;
-  type: 'task' | 'milestone';
+  type: 'task' | 'milestone' | 'decision';
   project_id: number | null;
   assignee_id: number | null;
   start_date: string | null;
   end_date: string | null;
   density: number;
-  status: 'todo' | 'in_progress' | 'blocked' | 'done';
+  status: 'todo' | 'in_progress' | 'blocked' | 'done' | 'cancelled';
   priority: number;
   progress: number;
   parent_task_id: number | null;

@@ -1712,6 +1712,7 @@ export function CustomGantt({ tasks, projects, people, autoArrangeRef }: Props) 
                     const isDragging = dragState.current?.taskId === task.id ||
                       (dragState.current?.coTaskSnapshots?.some((s) => s.taskId === task.id) ?? false);
                     const isDone = task.status === 'done';
+                    const isClosed = isDone || task.status === 'cancelled';
                     const isSelected = selectedTaskIds.has(task.id);
                     const isHigh = task.priority === 3;
                     const isLow = task.priority === 1;
@@ -1746,7 +1747,7 @@ export function CustomGantt({ tasks, projects, people, autoArrangeRef }: Props) 
                             cursor: 'grab',
                             userSelect: 'none',
                             zIndex: isDragging ? 15 : isSelected ? 8 : 6,
-                            opacity: isDone ? 0.2 : isDragging ? 0.4 : 1,
+                            opacity: isClosed ? 0.2 : isDragging ? 0.4 : 1,
                             outline: isSelected ? '2px solid var(--accent)' : 'none',
                             outlineOffset: '2px',
                             overflow: 'hidden',

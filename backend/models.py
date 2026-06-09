@@ -39,11 +39,11 @@ class Person(Base):
 class Task(Base):
     __tablename__ = "tasks"
     __table_args__ = (
-        CheckConstraint("status IN ('todo','in_progress','blocked','done')", name="ck_task_status"),
+        CheckConstraint("status IN ('todo','in_progress','blocked','done','cancelled')", name="ck_task_status"),
         CheckConstraint("priority IN (1,2,3)", name="ck_task_priority"),
         CheckConstraint("progress BETWEEN 0 AND 100", name="ck_task_progress"),
         CheckConstraint("density BETWEEN 1 AND 100", name="ck_task_density"),
-        CheckConstraint("type IN ('task','milestone')", name="ck_task_type"),
+        CheckConstraint("type IN ('task','milestone','decision')", name="ck_task_type"),
         Index("idx_tasks_project", "project_id"),
         Index("idx_tasks_assignee", "assignee_id"),
         Index("idx_tasks_dates", "start_date", "end_date"),

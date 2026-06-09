@@ -9,18 +9,20 @@ interface Props {
   people: Person[];
 }
 
-const STATUS_OPTIONS = ['todo', 'in_progress', 'blocked', 'done'] as const;
+const STATUS_OPTIONS = ['todo', 'in_progress', 'blocked', 'done', 'cancelled'] as const;
 const STATUS_LABELS: Record<string, string> = {
   todo: 'To Do',
   in_progress: 'In Progress',
   blocked: 'Blocked',
   done: 'Done',
+  cancelled: 'Cancelled',
 };
 const STATUS_COLORS: Record<string, string> = {
   todo: '#9ca3af',
   in_progress: '#3b82f6',
   blocked: 'var(--urgent)',
   done: '#22c55e',
+  cancelled: '#6b7280',
 };
 
 // ── Checklist helpers ────────────────────────────────────────────────────────
