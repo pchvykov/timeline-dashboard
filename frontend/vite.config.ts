@@ -7,9 +7,6 @@ export default defineConfig({
   resolve: {
     dedupe: ['react', 'react-dom'],
   },
-  optimizeDeps: {
-    include: ['wx-react-gantt'],
-  },
   server: {
     proxy: {
       '/api': {
