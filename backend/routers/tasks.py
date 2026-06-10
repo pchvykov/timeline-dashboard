@@ -74,6 +74,9 @@ def get_task(task_id: int, db: Session = Depends(get_db)):
 
 @router.post("", response_model=TaskOut, status_code=201)
 def create_task(data: TaskCreate, db: Session = Depends(get_db)):
+    # Default new tasks to Pavel (people.id=1) unless an assignee was specified.
+    if data.assignee_id is None:
+        data.assignee_id = 1
     task = Task(**data.model_dump())
     db.add(task)
     db.commit()

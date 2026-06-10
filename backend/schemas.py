@@ -57,7 +57,7 @@ class TaskBase(BaseModel):
     description: Optional[str] = None
     type: str = "task"
     project_id: Optional[int] = None
-    assignee_id: Optional[int] = None
+    assignee_id: Optional[int] = 1  # default to Pavel (people.id=1); create_task also backfills null → 1
     start_date: Optional[str] = None
     end_date: Optional[str] = None
     density: int = 100
